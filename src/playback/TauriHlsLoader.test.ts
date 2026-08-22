@@ -123,6 +123,60 @@ describe("Tauri HLS loader", () => {
     loader.destroy();
   });
 
+  it("does not turn HLS.js default 0-0 range metadata into bytes=0--1", async () => {
+    let receivedRange: string | null = "not-called";
+    const fetcher: MediaFetcher = vi.fn(async (_url, _source, init) => {
+      receivedRange = new Headers(init?.headers).get("Range");
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+    });
+    const Loader = createTauriHlsLoader(source, fetcher);
+    const loader = new Loader({} as HlsConfig);
+
+    await new Promise<void>((resolve, reject) => {
+      loader.load({
+        ...context,
+        responseType: "arraybuffer",
+        type: "fragment" as LoaderContext["type"],
+        rangeStart: 0,
+        rangeEnd: 0,
+      }, config, {
+        onSuccess: () => resolve(),
+        onError: (error) => reject(new Error(error.text)),
+        onTimeout: () => reject(new Error("timed out")),
+      });
+    });
+
+    expect(receivedRange).toBeNull();
+    loader.destroy();
+  });
+
+  it("converts a real half-open HLS byte range to an inclusive HTTP range", async () => {
+    let receivedRange: string | null = null;
+    const fetcher: MediaFetcher = vi.fn(async (_url, _source, init) => {
+      receivedRange = new Headers(init?.headers).get("Range");
+      return new Response(new Uint8Array([1, 2, 3]), { status: 206 });
+    });
+    const Loader = createTauriHlsLoader(source, fetcher);
+    const loader = new Loader({} as HlsConfig);
+
+    await new Promise<void>((resolve, reject) => {
+      loader.load({
+        ...context,
+        responseType: "arraybuffer",
+        type: "fragment" as LoaderContext["type"],
+        rangeStart: 100,
+        rangeEnd: 200,
+      }, config, {
+        onSuccess: () => resolve(),
+        onError: (error) => reject(new Error(error.text)),
+        onTimeout: () => reject(new Error("timed out")),
+      });
+    });
+
+    expect(receivedRange).toBe("bytes=100-199");
+    loader.destroy();
+  });
+
   it("parses JSON response contexts for content steering and interstitial metadata", async () => {
     const fetcher: MediaFetcher = vi.fn(async () => new Response(
       JSON.stringify({ VERSION: 1, "PATHWAY-PRIORITY": ["cdn-a"] }),
