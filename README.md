@@ -59,8 +59,15 @@ npm run dev
 
 The existing Git-connected Pages project publishes merged `main` commits. The
 browser app calls the separately deployed `crowflix-relay` Worker for live EPG
-data and header-aware playback where a normal browser cannot supply provider
-headers.
+data and media routes a normal HTTPS browser cannot load directly. Ordinary
+HTTPS sources remain direct-first; Crow-Flix automatically falls back through
+the relay for CORS failures, uses it for HTTP and provider-header sources, and
+preserves redirected HLS, DASH child requests, and byte-range media.
+
+The catalogue distinguishes recently verified playback routes from unverified,
+part-time, regional, and temporarily failed entries. Verified routes rank
+first, and the default browser view keeps clearly limited or failed entries out
+of the way without deleting them from the full catalogue.
 
 Live programme-guide requests use Cloudflare Turnstile in Managed mode. The
 browser obtains a one-time `epg_load` token, and the relay validates it through

@@ -24,6 +24,14 @@ export type StreamSource = {
   isHttps?: boolean;
   requiresHeaders?: boolean;
   preferenceScore?: number;
+  /**
+   * Browser delivery route. Catalogue/native sources leave this unset.  Web
+   * sources use distinct route IDs so a failed direct request does not poison
+   * the relay fallback (or vice versa).
+   */
+  delivery?: "direct" | "relay";
+  /** Provider-facing URL used for resolving relative DASH resources. */
+  logicalUrl?: string;
 };
 
 export type PlaybackKind =
@@ -41,6 +49,15 @@ export type PlaybackFailureReason =
   | "unsupported"
   | "autoplay"
   | "aborted";
+
+export type PlaybackFailurePhase =
+  | "probe"
+  | "manifest"
+  | "media"
+  | "decode"
+  | "startup"
+  | "stall"
+  | "protocol";
 
 export type SourceHealth = {
   failures: number;
@@ -62,6 +79,9 @@ export type PlaybackDiagnostic = {
   transport: PlaybackKind;
   endpoint: string;
   reason: PlaybackFailureReason;
+  phase: PlaybackFailurePhase;
+  httpStatus?: number;
+  delivery?: "direct" | "relay";
   at: string;
 };
 

@@ -4,7 +4,10 @@ import worker from "../src/index";
 const call = (path: string, method = "GET"): Promise<Response> =>
   worker.fetch(new Request(`https://relay.example${path}`, { method }));
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("worker routing", () => {
   it("GET /health returns the service identity with CORS *", async () => {
@@ -131,5 +134,154 @@ describe("worker input validation (no network is touched)", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect((await response.json()).matchedChannels).toBe(1);
     expect(fetcher.mock.calls[0]?.[0]).toBe("https://challenges.cloudflare.com/turnstile/v0/siteverify");
+  });
+});
+
+describe("stream relay transport", () => {
+  it.each([401, 403, 404, 410, 429, 451, 503])(
+    "preserves an upstream HTTP %i so the player can explain the failure",
+    async (status) => {
+      vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(
+        new Response("provider detail must not be relayed", { status }),
+      ));
+      const target = encodeURIComponent("https://media.example/live.m3u8");
+
+      const response = await call(`/stream?url=${target}`);
+
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({
+        error: `The stream provider responded ${status}.`,
+      });
+    },
+  );
+
+  it("resolves relative HLS entries against the validated cross-host redirect target", async () => {
+    const startUrl = "https://short.example/channel";
+    const finalUrl = "https://media.example/live/path/master.m3u8?token=abc";
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const href = input instanceof Request ? input.url : input.toString();
+      expect(init?.redirect).toBe("manual");
+      if (href === startUrl) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: finalUrl },
+        });
+      }
+      if (href === finalUrl) {
+        return new Response("#EXTM3U\nsegments/chunk-1.ts\n", {
+          status: 200,
+          headers: { "Content-Type": "application/vnd.apple.mpegurl" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const response = await call(`/stream?url=${encodeURIComponent(startUrl)}`);
+
+    expect(response.status).toBe(200);
+    const segmentLine = (await response.text())
+      .split("\n")
+      .find((line) => line.startsWith("https://relay.example/stream"));
+    expect(segmentLine).toBeDefined();
+    const relayedSegment = new URL(segmentLine!);
+    expect(relayedSegment.searchParams.get("url")).toBe(
+      "https://media.example/live/path/segments/chunk-1.ts",
+    );
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwards one safe byte range and preserves a 206 media response", async () => {
+    const media = new Uint8Array([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    ]);
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      expect(new Headers(init?.headers).get("Range")).toBe("bytes=1024-2047");
+      return new Response(media, {
+        status: 206,
+        headers: {
+          "Content-Type": "video/mp2t",
+          "Content-Range": "bytes 1024-1035/4096",
+          "Accept-Ranges": "bytes",
+          "Content-Length": String(media.byteLength),
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const target = encodeURIComponent("https://media.example/segment.ts");
+    const response = await worker.fetch(new Request(
+      `https://relay.example/stream?url=${target}`,
+      { headers: { Range: "bytes=1024-2047" } },
+    ));
+
+    expect(response.status).toBe(206);
+    expect(response.headers.get("Content-Range")).toBe("bytes 1024-1035/4096");
+    expect(response.headers.get("Accept-Ranges")).toBe("bytes");
+    expect(response.headers.get("Content-Length")).toBe("12");
+    expect(response.headers.get("Access-Control-Expose-Headers")).toContain(
+      "Content-Range",
+    );
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(media);
+  });
+
+  it("rejects multipart byte ranges before contacting upstream", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetcher);
+    const target = encodeURIComponent("https://media.example/segment.ts");
+
+    const response = await worker.fetch(new Request(
+      `https://relay.example/stream?url=${target}`,
+      { headers: { Range: "bytes=0-10,20-30" } },
+    ));
+
+    expect(response.status).toBe(400);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("bounds an upstream connection that never starts responding", async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn<typeof fetch>((_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      })
+    );
+    vi.stubGlobal("fetch", fetcher);
+
+    const target = encodeURIComponent("https://media.example/live");
+    const responsePromise = call(`/stream?url=${target}`);
+    await vi.advanceTimersByTimeAsync(8_001);
+    const response = await responsePromise;
+
+    expect(response.status).toBe(504);
+    expect((await response.json()).error).toMatch(/did not start responding/i);
+  });
+
+  it("does not keep an overall timer after live media sends its first bytes", async () => {
+    vi.useFakeTimers();
+    let upstreamSignal: AbortSignal | null | undefined;
+    const liveBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]));
+      },
+    });
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      upstreamSignal = init?.signal;
+      return new Response(liveBody, {
+        status: 200,
+        headers: { "Content-Type": "video/mp2t" },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const target = encodeURIComponent("https://media.example/live.ts");
+    const response = await call(`/stream?url=${target}`);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(response.status).toBe(200);
+    expect(upstreamSignal?.aborted).toBe(false);
+    await response.body?.cancel();
   });
 });

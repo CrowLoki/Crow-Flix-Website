@@ -10,6 +10,7 @@ type MockHlsHandler = (event: string, data?: MockHlsError) => void;
 
 type MockHlsInstance = {
   handlers: Map<string, MockHlsHandler>;
+  config: Record<string, unknown>;
   loadSource: ReturnType<typeof vi.fn>;
   startLoad: ReturnType<typeof vi.fn>;
 };
@@ -38,6 +39,7 @@ vi.mock("hls.js", () => {
     };
 
     handlers = new Map<string, MockHlsHandler>();
+    config: Record<string, unknown>;
     startLoad = vi.fn();
     loadSource = vi.fn();
     recoverMediaError = vi.fn();
@@ -46,7 +48,8 @@ vi.mock("hls.js", () => {
     detachMedia = vi.fn();
     destroy = vi.fn();
 
-    constructor() {
+    constructor(config: Record<string, unknown>) {
+      this.config = config;
       hlsState.instances.push(this);
     }
 
@@ -60,6 +63,8 @@ vi.mock("hls.js", () => {
 
 import {
   PlaybackRun,
+  readPlaybackHealth,
+  SOURCE_HEALTH_CHANGED_EVENT,
   type PlaybackControllerState,
 } from "./usePlaybackController";
 
@@ -127,7 +132,52 @@ describe("PlaybackRun retry", () => {
     run.dispose();
   });
 
-  it("reloads the manifest once after a fatal manifest network error before failing over", async () => {
+  it("exports health safely and announces a source-health change", async () => {
+    const storage = memoryStorage();
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("window", { dispatchEvent });
+    const video = {
+      ended: false,
+      load: vi.fn(),
+      pause: vi.fn(),
+      removeAttribute: vi.fn(),
+    } as unknown as HTMLVideoElement;
+    const run = new PlaybackRun({
+      key: "health-channel",
+      name: "Health Channel",
+      sources: [{ id: "unsupported-health", url: "rtmp://provider.test/live" }],
+    }, video, vi.fn());
+
+    run.start();
+    await Promise.resolve();
+
+    expect(readPlaybackHealth()).toMatchObject({
+      "unsupported-health": { failures: 1 },
+    });
+    expect(dispatchEvent).toHaveBeenCalledOnce();
+    expect(dispatchEvent.mock.calls[0]?.[0]).toMatchObject({
+      type: SOURCE_HEALTH_CHANGED_EVENT,
+    });
+    run.dispose();
+  });
+
+  it("ignores malformed health entries", () => {
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    storage.setItem("crowflix:source-health:v1", JSON.stringify({
+      valid: { failures: 2, cooldownUntil: 1_000, lastSuccessAt: 900 },
+      negative: { failures: -1, cooldownUntil: 0 },
+      string: "not health",
+      infinite: { failures: 1, cooldownUntil: "Infinity" },
+    }));
+
+    expect(readPlaybackHealth()).toEqual({
+      valid: { failures: 2, cooldownUntil: 1_000, lastSuccessAt: 900 },
+    });
+  });
+
+  it("fails over immediately after a fatal manifest error with a bounded manifest policy", async () => {
     const storage = memoryStorage();
     vi.stubGlobal("localStorage", storage);
     const updates: PlaybackControllerState[] = [];
@@ -160,6 +210,24 @@ describe("PlaybackRun retry", () => {
     const onError = primary?.handlers.get("hlsError");
     expect(onError).toBeDefined();
     expect(primary.loadSource).toHaveBeenCalledOnce();
+    expect(primary.config).toMatchObject({
+      manifestLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 7_000,
+          maxLoadTimeMs: 10_000,
+          timeoutRetry: null,
+          errorRetry: null,
+        },
+      },
+      playlistLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 7_000,
+          maxLoadTimeMs: 10_000,
+          timeoutRetry: null,
+          errorRetry: null,
+        },
+      },
+    });
 
     onError?.("hlsError", {
       fatal: true,
@@ -167,28 +235,10 @@ describe("PlaybackRun retry", () => {
       details: "manifestLoadError",
     });
 
-    expect(primary.loadSource).toHaveBeenCalledTimes(2);
-    expect(primary.loadSource).toHaveBeenLastCalledWith(
-      "https://provider.test/primary.m3u8",
-    );
-    expect(primary.startLoad).not.toHaveBeenCalled();
-    expect(updates[updates.length - 1]).toMatchObject({
-      status: "loading",
-      message: "Retrying this source…",
-      source: { id: "primary" },
-    });
-    expect(storage.getItem("crowflix:source-health:v1")).toBeNull();
-    expect(hlsState.instances).toHaveLength(1);
-
-    onError?.("hlsError", {
-      fatal: true,
-      type: "networkError",
-      details: "manifestLoadError",
-    });
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(primary.loadSource).toHaveBeenCalledTimes(2);
+    expect(primary.loadSource).toHaveBeenCalledOnce();
     expect(primary.startLoad).not.toHaveBeenCalled();
     expect(hlsState.instances).toHaveLength(2);
     expect(updates[updates.length - 1]).toMatchObject({
@@ -197,6 +247,8 @@ describe("PlaybackRun retry", () => {
     });
     expect(JSON.parse(storage.getItem("crowflix:source-health:v1") || "{}"))
       .toMatchObject({ primary: { failures: 1 } });
+    expect(updates.some((state) => state.message.includes("stream manifest"))).toBe(true);
+    expect(updates.some((state) => state.diagnostics[0]?.phase === "manifest")).toBe(true);
     run.dispose();
   });
 

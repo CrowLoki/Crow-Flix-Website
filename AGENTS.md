@@ -38,8 +38,10 @@
   TLS, and Git connection. Do not create another Pages project or use Direct
   Upload as a replacement.
 - The browser app uses the existing `crowflix-relay` Worker for live programme
-  guides and sources that require provider headers. The relay does not bypass
-  geographic, account, or provider restrictions.
+  guides and browser-incompatible media routes, including HTTP, CORS-blocked,
+  byte-range, redirected HLS, DASH, and provider-header sources. HTTPS sources
+  without special headers stay direct-first and use the relay as fallback.
+  The relay does not bypass geographic, account, or provider restrictions.
 - Live guide requests use a deployment-specific Cloudflare Turnstile widget
   and mandatory relay-side Siteverify validation. Keep staging and production
   widgets and secrets separate. Sitekeys are public; widget secrets must exist
@@ -59,5 +61,8 @@
   `epg_load`, and the environment-specific hostname before guide work.
 - Keep canonical, Open Graph, robots, sitemap, and security metadata aligned
   with `https://crowflix.tv/`.
+- Keep direct and relay route health separate. Only recently successful routes
+  may be labelled verified `LIVE`; unverified, part-time, regional, and failed
+  catalogue entries must remain distinguishable.
 - Before committing, run `npm ci`, `npm run check`, `npm audit
   --audit-level=moderate`, and `git diff --check`.

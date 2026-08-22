@@ -1,4 +1,9 @@
 import type { MediaPlayerClass } from "dashjs";
+import type { RequestInterceptor } from "@svta/cml-request";
+import {
+  logicalDashRequestUrl,
+  routeDashRequestUrl,
+} from "../relayClient";
 import {
   declaredResponseLength,
   playbackResponseLimit,
@@ -47,18 +52,28 @@ type DashLoaderFactory = (() => DashXhrLoaderInstance) & {
 };
 
 /**
- * dash.js 5.2.0 routes ordinary manifests, initialization data and media
- * segments through XHRLoader. Replacing that class keeps those requests in the
- * same native HTTP path as HLS, including per-source headers and redirects.
- *
- * Low-latency DASH's partial FetchLoader remains disabled through the player
- * settings in the controller because its streaming box contract is internal.
+ * dash.js routes ordinary manifests, initialization data and media segments
+ * through XHRLoader. Replacing that class keeps those requests in the same
+ * native HTTP path as HLS, including per-source headers and redirects.
+ * Relay-delivered sources also install a request interceptor because DASH can
+ * independently select FetchLoader for availabilityTimeComplete=false media.
  */
 export function installNativeDashTransport(
   player: MediaPlayerClass,
   source: StreamSource,
   fetcher: MediaFetcher = mediaFetch,
 ): void {
+  if (source.delivery === "relay") {
+    const relayEveryDashRequest: RequestInterceptor = async (request) => ({
+      ...request,
+      url: routeDashRequestUrl(request.url, source),
+    });
+    // dash.js uses FetchLoader for availabilityTimeComplete=false media even
+    // when low-latency playback is disabled. The interceptor runs for both
+    // FetchLoader and XHRLoader, so those segments cannot bypass the relay.
+    player.addRequestInterceptor(relayEveryDashRequest);
+  }
+
   const NativeXhrLoader: DashLoaderFactory = function NativeXhrLoader() {
     let controller: AbortController | null = null;
     let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -100,7 +115,8 @@ export function installNativeDashTransport(
           request.customData?.onloadend?.();
         }, timeoutMs);
 
-        void fetcher(request.url, source, {
+        const fetchUrl = routeDashRequestUrl(request.url, source);
+        void fetcher(fetchUrl, source, {
           method: request.method || "GET",
           headers,
           credentials: request.credentials,
@@ -111,7 +127,12 @@ export function installNativeDashTransport(
           const { data, byteLength } = await dashResponseData(response, request.responseType);
           const active = takeActiveRequest(request);
           if (!active) return;
-          target.url = response.url || request.url;
+          // A relayed Response URL points at `/stream`. Keep dash.js on the
+          // provider-facing URL so relative MPD/BaseURL references resolve
+          // correctly; every resulting request is wrapped above.
+          target.url = source.delivery === "relay"
+            ? logicalDashRequestUrl(request.url, source)
+            : response.url || request.url;
           target.status = response.status;
           target.statusText = response.statusText;
           target.headers = Object.fromEntries(response.headers.entries());

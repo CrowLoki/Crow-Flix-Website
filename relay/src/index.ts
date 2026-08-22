@@ -2,7 +2,11 @@ import { RelayError } from "./errors";
 import { loadAutoEpg } from "./epg";
 import { rewriteM3u8 } from "./m3u8";
 import { concatChunks, readBounded } from "./streams";
-import { fetchValidated, validateExternalUrl } from "./urls";
+import {
+  fetchValidated,
+  fetchValidatedWithUrl,
+  validateExternalUrl,
+} from "./urls";
 import {
   verifyTurnstile,
   type TurnstileEnvironment,
@@ -15,8 +19,11 @@ const FETCH_MAX_BYTES = 32 * 1024 * 1024;
 /** HLS playlist cap; media segments stream through unbounded. */
 const PLAYLIST_MAX_BYTES = 4 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 30_000;
+/** Covers upstream connection/headers and the first body byte, not playback. */
+const STREAM_FIRST_BYTE_TIMEOUT_MS = 8_000;
 const MAX_UA_LENGTH = 512;
 const MAX_REFERER_LENGTH = 2_048;
+const MAX_RANGE_LENGTH = 64;
 
 const RELAY_UA = "crowflix-relay/0.1.0";
 
@@ -24,6 +31,8 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "*",
+  "Access-Control-Expose-Headers":
+    "Content-Length, Content-Range, Accept-Ranges",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -71,6 +80,40 @@ function sanitizeHeaderParam(
     }
   }
   return value;
+}
+
+/**
+ * Browsers use single byte ranges for media seeking. Forward that narrow form
+ * only; multipart and malformed ranges are rejected rather than reflected to
+ * arbitrary upstream servers.
+ */
+function safeClientRange(request: Request): string | null {
+  const raw = request.headers.get("range");
+  if (raw === null) return null;
+  if (raw.length === 0 || raw.length > MAX_RANGE_LENGTH) {
+    throw new RelayError(400, "That byte range is not usable.");
+  }
+
+  const match = /^bytes=(?:(\d{1,20})-(\d{0,20})|-(\d{1,20}))$/.exec(raw);
+  if (!match) {
+    throw new RelayError(400, "Only one normal byte range is supported.");
+  }
+
+  const start = match[1];
+  const end = match[2];
+  const suffixLength = match[3];
+  if (suffixLength !== undefined && BigInt(suffixLength) === 0n) {
+    throw new RelayError(400, "That byte range is not usable.");
+  }
+  if (
+    start !== undefined &&
+    end !== undefined &&
+    end.length > 0 &&
+    BigInt(start) > BigInt(end)
+  ) {
+    throw new RelayError(400, "That byte range is not usable.");
+  }
+  return raw;
 }
 
 function handleHealth(): Response {
@@ -177,21 +220,194 @@ function playlistResponse(
   return new Response(rewritten, { status: 200, headers });
 }
 
-async function handleStream(requestUrl: URL): Promise<Response> {
+interface PrefixRead {
+  chunks: Uint8Array[];
+  total: number;
+  exhausted: boolean;
+}
+
+async function readPrefix(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  minimumBytes: number,
+  onFirstByte: () => void,
+): Promise<PrefixRead> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let exhausted = false;
+  let sawByte = false;
+  while (total < minimumBytes) {
+    const { done, value } = await reader.read();
+    if (done) {
+      exhausted = true;
+      break;
+    }
+    if (value.byteLength === 0) continue;
+    if (!sawByte) {
+      sawByte = true;
+      onFirstByte();
+    }
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  return { chunks, total, exhausted };
+}
+
+async function finishPlaylistRead(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  prefix: PrefixRead,
+): Promise<Uint8Array> {
+  const chunks = [...prefix.chunks];
+  let total = prefix.total;
+  try {
+    if (total > PLAYLIST_MAX_BYTES) {
+      void reader.cancel().catch(() => undefined);
+      throw new RelayError(
+        502,
+        "That playlist exceeded the 4 MiB relay limit.",
+      );
+    }
+    if (!prefix.exhausted) {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (total + value.byteLength > PLAYLIST_MAX_BYTES) {
+          void reader.cancel().catch(() => undefined);
+          throw new RelayError(
+            502,
+            "That playlist exceeded the 4 MiB relay limit.",
+          );
+        }
+        chunks.push(value);
+        total += value.byteLength;
+      }
+    }
+    return concatChunks(chunks, total);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Put sniffed bytes back in front of the original reader. This avoids tee():
+ * cancelling one tee branch can wait indefinitely for the untouched branch.
+ */
+function streamAfterPrefix(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  prefix: PrefixRead,
+): ReadableStream<Uint8Array> {
+  let prefixIndex = 0;
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    reader.releaseLock();
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (prefixIndex < prefix.chunks.length) {
+        controller.enqueue(prefix.chunks[prefixIndex]);
+        prefixIndex += 1;
+        if (prefixIndex === prefix.chunks.length && prefix.exhausted) {
+          release();
+          controller.close();
+        }
+        return;
+      }
+      if (prefix.exhausted) {
+        release();
+        controller.close();
+        return;
+      }
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          release();
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (error) {
+        release();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        release();
+      }
+    },
+  });
+}
+
+function mediaResponseHeaders(upstream: Response): Headers {
+  const headers = new Headers(CORS_HEADERS);
+  for (const name of [
+    "content-type",
+    "cache-control",
+    "content-range",
+    "accept-ranges",
+    "content-length",
+  ]) {
+    const value = upstream.headers.get(name);
+    if (value !== null) headers.set(name, value);
+  }
+  return headers;
+}
+
+async function handleStream(
+  request: Request,
+  requestUrl: URL,
+): Promise<Response> {
   const target = validateExternalUrl(requiredParam(requestUrl, "url"));
   const ua = sanitizeHeaderParam(requestUrl, "ua", MAX_UA_LENGTH);
   const referer = sanitizeHeaderParam(requestUrl, "referer", MAX_REFERER_LENGTH);
+  const range = safeClientRange(request);
 
   const upstreamHeaders = new Headers();
   if (ua !== null) upstreamHeaders.set("User-Agent", ua);
   if (referer !== null) upstreamHeaders.set("Referer", referer);
+  if (range !== null) upstreamHeaders.set("Range", range);
 
-  // No timeout here: live IPTV streams are long-lived by nature.
-  const upstream = await fetchValidated(target, { headers: upstreamHeaders });
+  // Bound only connection/headers and the first body byte. Once media starts,
+  // the abort timer is cleared so a healthy live stream can run indefinitely.
+  const abortController = new AbortController();
+  let deadlineExpired = false;
+  const deadline = setTimeout(() => {
+    deadlineExpired = true;
+    abortController.abort();
+  }, STREAM_FIRST_BYTE_TIMEOUT_MS);
+  const clearDeadline = (): void => clearTimeout(deadline);
+
+  let upstream: Response;
+  let finalUrl: URL;
+  try {
+    ({ response: upstream, finalUrl } = await fetchValidatedWithUrl(target, {
+      headers: upstreamHeaders,
+      signal: abortController.signal,
+    }));
+  } catch (error) {
+    clearDeadline();
+    if (deadlineExpired) {
+      throw new RelayError(504, "The stream server did not start responding.");
+    }
+    throw error;
+  }
+  if (deadlineExpired) {
+    clearDeadline();
+    void upstream.body?.cancel().catch(() => undefined);
+    throw new RelayError(504, "The stream server did not start responding.");
+  }
   if (!upstream.ok) {
+    clearDeadline();
+    const status = upstream.status >= 400 && upstream.status <= 599
+      ? upstream.status
+      : 502;
     throw new RelayError(
-      502,
-      `The stream server responded ${upstream.status}.`,
+      status,
+      `The stream provider responded ${upstream.status}.`,
     );
   }
 
@@ -199,26 +415,35 @@ async function handleStream(requestUrl: URL): Promise<Response> {
   const origin = requestUrl.origin;
 
   if (!upstream.body) {
-    const headers = new Headers(CORS_HEADERS);
-    if (contentType) headers.set("Content-Type", contentType);
-    return new Response(null, { status: 200, headers });
+    clearDeadline();
+    return new Response(null, {
+      status: upstream.status,
+      headers: mediaResponseHeaders(upstream),
+    });
   }
 
-  // Fast path: the content type or file extension already says "playlist".
-  if (isPlaylistTarget(target, contentType)) {
-    const { data, truncated } = await readBounded(
-      upstream.body,
-      PLAYLIST_MAX_BYTES,
-    );
-    if (truncated) {
-      throw new RelayError(
-        502,
-        "That playlist exceeded the 4 MiB relay limit.",
-      );
+  const reader = upstream.body.getReader();
+  let prefix: PrefixRead;
+  try {
+    prefix = await readPrefix(reader, 8, clearDeadline);
+    clearDeadline();
+  } catch (error) {
+    clearDeadline();
+    reader.releaseLock();
+    if (deadlineExpired) {
+      throw new RelayError(504, "The stream server did not send media data.");
     }
+    throw error;
+  }
+
+  const first = concatChunks(prefix.chunks, prefix.total);
+  // The final URL is the redirect target that has already passed SSRF
+  // validation. Relative HLS URIs must resolve against it, not the short URL.
+  if (isPlaylistTarget(finalUrl, contentType) || startsWithExtm3u(first)) {
+    const playlist = await finishPlaylistRead(reader, prefix);
     return playlistResponse(
-      new TextDecoder().decode(data),
-      target,
+      new TextDecoder().decode(playlist),
+      finalUrl,
       contentType,
       origin,
       ua,
@@ -226,66 +451,12 @@ async function handleStream(requestUrl: URL): Promise<Response> {
     );
   }
 
-  // Sniffing path: tee the body so a mislabeled playlist (no extension,
-  // generic content type) still gets rewritten, while real media segments
-  // pass through untouched at full speed.
-  const [probe, passthrough] = upstream.body.tee();
-  const probeReader = probe.getReader();
-  let first = new Uint8Array(0);
-  let probeExhausted = false;
-  while (first.byteLength < 8) {
-    const { done, value } = await probeReader.read();
-    if (done) {
-      probeExhausted = true;
-      break;
-    }
-    first = concatChunks([first, value], first.byteLength + value.byteLength);
-  }
-
-  if (startsWithExtm3u(first)) {
-    // Playlist after all: finish reading the probe branch within the cap.
-    const chunks = [first];
-    let total = first.byteLength;
-    let truncated = false;
-    if (!probeExhausted) {
-      for (;;) {
-        const { done, value } = await probeReader.read();
-        if (done) break;
-        if (total + value.byteLength > PLAYLIST_MAX_BYTES) {
-          truncated = true;
-          await probeReader.cancel().catch(() => undefined);
-          break;
-        }
-        chunks.push(value);
-        total += value.byteLength;
-      }
-    }
-    probeReader.releaseLock();
-    if (truncated) {
-      throw new RelayError(
-        502,
-        "That playlist exceeded the 4 MiB relay limit.",
-      );
-    }
-    return playlistResponse(
-      new TextDecoder().decode(concatChunks(chunks, total)),
-      target,
-      contentType,
-      origin,
-      ua,
-      referer,
-    );
-  }
-
-  // Genuine media segment (or any other binary): abandon the probe branch
-  // and stream the untouched passthrough branch back.
-  await probeReader.cancel().catch(() => undefined);
-  probeReader.releaseLock();
-  const headers = new Headers(CORS_HEADERS);
-  if (contentType) headers.set("Content-Type", contentType);
-  const cacheControl = upstream.headers.get("cache-control");
-  if (cacheControl) headers.set("Cache-Control", cacheControl);
-  return new Response(passthrough, { status: 200, headers });
+  // Genuine media: replay the small sniffed prefix, then stream directly from
+  // the same reader. There is no overall playback timeout.
+  return new Response(streamAfterPrefix(reader, prefix), {
+    status: upstream.status,
+    headers: mediaResponseHeaders(upstream),
+  });
 }
 
 export default {
@@ -309,7 +480,7 @@ export default {
         case "/fetch":
           return await handleFetch(url);
         case "/stream":
-          return await handleStream(url);
+          return await handleStream(request, url);
         default:
           return json({ error: "Unknown relay route." }, 404);
       }
