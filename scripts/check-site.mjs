@@ -87,6 +87,16 @@ const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
 for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Best available", "All catalogued"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
+
+const sourcePreflight = await readFile(path.join(repositoryRoot, "src", "playback", "preflight.ts"), "utf8");
+for (const value of ["browserPreflightRoutes", "runPreflightQueue", "verifyHlsMedia", "verifyDashMedia"]) {
+  assert(sourcePreflight.includes(value), `Source readiness routing is missing: ${value}`);
+}
+
+const playbackController = await readFile(path.join(repositoryRoot, "src", "playback", "usePlaybackController.ts"), "utf8");
+for (const value of ["reorderRemainingSources", "orderSourcesByPreflight", "Trying the next playback route"]) {
+  assert(playbackController.includes(value), `Dynamic playback failover is missing: ${value}`);
+}
 assert(!app.includes("Download Crow-Flix for Windows"), "The browser app was replaced by a desktop download page");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/PRIVACY.md"), "The About page does not link to the website privacy notice");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/SECURITY.md"), "The About page does not link to the website security policy");
