@@ -72,6 +72,7 @@ const requiredIndexText = [
   "e685dcfef2b8a3489f91eed558174b96b0ddf7bd86c6937a557d4e00f9017812",
   "https://github.com/CrowLoki/Crow-Flix/releases/tag/v0.5.1",
   "https://github.com/CrowLoki/Crow-Flix/tree/v0.5.1",
+  "https://github.com/CrowLoki/Crow-Flix-Website",
   "https://crow-flix.pages.dev/",
 ];
 for (const value of requiredIndexText) assert(index.includes(value), `index.html is missing: ${value}`);
@@ -163,4 +164,4 @@ for (const line of manifest.trim().split(/\r?\n/)) {
 }
 
 const totalBytes = (await Promise.all(files.map(async (file) => (await stat(file)).size))).reduce((a, b) => a + b, 0);
-console.log(`Crow-Flix site verification passed: ${files.length} deployable files, ${totalBytes} bytes.`);
+console.log(`Crow-Flix-Website verification passed: ${files.length} deployable files, ${totalBytes} bytes.`);

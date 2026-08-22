@@ -1,9 +1,14 @@
 {
-  "name": "crow-flix-site",
+  "name": "crow-flix-website",
   "version": "0.1.0",
   "private": true,
   "description": "Official static download and information site for the CrowFlix Windows desktop application",
   "license": "AGPL-3.0-only",
+  "homepage": "https://crow-flix.pages.dev/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CrowLoki/Crow-Flix-Website.git"
+  },
   "engines": {
     "node": ">=22"
   },

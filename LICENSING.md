@@ -12,6 +12,11 @@ Public License, version 3 only (`AGPL-3.0-only`). The complete licence is in
 [`LICENSE`](LICENSE), with a second standard-location copy in
 [`LICENSES/AGPL-3.0-only.txt`](LICENSES/AGPL-3.0-only.txt).
 
+Crow is the creator and copyright holder of the Crow-Flix-Website-authored code
+and original project documentation. Third-party service and component notices
+identify their respective terms; they do not attribute authorship of this
+website to those projects or their maintainers.
+
 ## Crow brand assets
 
 The following are not licensed under the AGPL:

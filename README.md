@@ -1,14 +1,23 @@
-# Crow-Flix website
+# Crow-Flix-Website
 
 Official static information and download website for the
 [CrowFlix Windows desktop application](https://github.com/CrowLoki/Crow-Flix).
 
-The desktop application, this website, and Orion Public Research are separate
-projects:
+## Project identity
+
+Crow-Flix-Website is an original, independent project created and owned by
+Crow. It is maintained separately from Crow's other projects; shared Crow-owned
+branding does not make this website a clone, fork, continuation, or derivative
+of another product.
+
+References to third-party services document their technical roles and terms.
+They do not assign ownership or authorship of Crow-Flix-Website to those
+services or their maintainers.
+
+The desktop application and this website are separate projects:
 
 - `CrowLoki/Crow-Flix` contains the Tauri desktop source and release assets.
-- `CrowLoki/Crow-Flix-Site` contains this static website only.
-- `CrowLoki/orion-public-research` remains the Orion research website.
+- `CrowLoki/Crow-Flix-Website` contains this static website only.
 
 ## Local verification
 
