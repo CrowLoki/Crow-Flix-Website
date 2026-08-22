@@ -3,6 +3,10 @@ import { loadAutoEpg } from "./epg";
 import { rewriteM3u8 } from "./m3u8";
 import { concatChunks, readBounded } from "./streams";
 import { fetchValidated, validateExternalUrl } from "./urls";
+import {
+  verifyTurnstile,
+  type TurnstileEnvironment,
+} from "./turnstile";
 
 const SERVICE_VERSION = "0.1.0";
 
@@ -73,12 +77,19 @@ function handleHealth(): Response {
   return json({ ok: true, service: "crowflix-relay", version: SERVICE_VERSION });
 }
 
-async function handleEpg(url: URL): Promise<Response> {
+async function handleEpg(
+  request: Request,
+  url: URL,
+  env: TurnstileEnvironment,
+): Promise<Response> {
+  await verifyTurnstile(request, env);
   const country = url.searchParams.get("country") ?? "";
   const idsParam = url.searchParams.get("ids") ?? "";
   const result = await loadAutoEpg(country, idsParam.split(","));
-  // Guide files update roughly hourly; a short cache saves Worker CPU.
-  return json(result, 200, "public, max-age=300");
+  // Every browser guide request must reach this handler so its one-time
+  // Turnstile token is verified. Upstream guide caching belongs inside the
+  // Worker, never in a browser or shared HTTP cache in front of verification.
+  return json(result);
 }
 
 async function handleFetch(url: URL): Promise<Response> {
@@ -278,7 +289,10 @@ async function handleStream(requestUrl: URL): Promise<Response> {
 }
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: TurnstileEnvironment = {},
+  ): Promise<Response> {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
@@ -291,7 +305,7 @@ export default {
         case "/health":
           return handleHealth();
         case "/epg":
-          return await handleEpg(url);
+          return await handleEpg(request, url, env);
         case "/fetch":
           return await handleFetch(url);
         case "/stream":

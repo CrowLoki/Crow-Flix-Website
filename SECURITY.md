@@ -15,3 +15,8 @@ desktop application, use the
 The website and relay do not bypass provider geographic, subscription, token,
 or account restrictions. A provider outage, moved stream, unavailable guide,
 or regional restriction is not by itself a Crow-Flix security vulnerability.
+
+Live guide retrieval is protected by Cloudflare Turnstile with server-side
+Siteverify validation. Report any apparent token replay, hostname/action
+validation bypass, leaked widget secret, or way to invoke protected guide work
+without successful verification through the private advisory form.

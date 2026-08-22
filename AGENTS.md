@@ -40,6 +40,13 @@
 - The browser app uses the existing `crowflix-relay` Worker for live programme
   guides and sources that require provider headers. The relay does not bypass
   geographic, account, or provider restrictions.
+- Live guide requests use a deployment-specific Cloudflare Turnstile widget
+  and mandatory relay-side Siteverify validation. Keep staging and production
+  widgets and secrets separate. Sitekeys are public; widget secrets must exist
+  only as encrypted Worker bindings.
+- Turnstile protects guide retrieval only. Do not gate ordinary catalogue
+  browsing, favourites, Web Library edits, or video playback, and do not add
+  payment or Stripe flows.
 
 ## Repository rules
 
@@ -47,6 +54,9 @@
 - Keep `dist/`, `node_modules/`, logs, caches, and generated output untracked.
 - Preserve Crow ownership, the Crow brand licence, the asset manifest, privacy
   disclosures, and third-party notices.
+- Keep `TURNSTILE_SECRET` out of source, Vite variables, logs, command output,
+  documentation, and chat. Validate Siteverify success, exact action
+  `epg_load`, and the environment-specific hostname before guide work.
 - Keep canonical, Open Graph, robots, sitemap, and security metadata aligned
   with `https://crowflix.tv/`.
 - Before committing, run `npm ci`, `npm run check`, `npm audit

@@ -62,6 +62,12 @@ browser app calls the separately deployed `crowflix-relay` Worker for live EPG
 data and header-aware playback where a normal browser cannot supply provider
 headers.
 
+Live programme-guide requests use Cloudflare Turnstile in Managed mode. The
+browser obtains a one-time `epg_load` token, and the relay validates it through
+Siteverify with exact action and hostname checks before performing guide
+downloads and XML parsing. Catalogue browsing and video playback remain
+unchallenged. Crow-Flix has no payment or Stripe integration.
+
 ## Content and availability
 
 Crow-Flix does not host, sell, or relicense television channels. It consumes

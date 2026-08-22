@@ -219,6 +219,14 @@ main { min-height: calc(100vh - 122px); }
 .guide-status { height: 48px; display: flex; align-items: center; gap: 9px; padding: 0 4.3%; border-bottom: 1px solid var(--line); color: var(--muted); background: #030811; font-size: 11px; }
 .guide-status strong { color: #cbc4d8; }
 .guide-status span:last-child { margin-left: auto; }
+.turnstile-gate { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); align-items: center; gap: 22px; margin: 24px 4.3% 0; padding: 22px 24px; border: 1px solid var(--line-strong); border-radius: 14px; background: radial-gradient(circle at 90% 20%, rgba(168, 77, 255, .14), transparent 42%), rgba(7, 16, 27, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .28); }
+.turnstile-gate h2 { margin: 0 0 7px; font: 700 24px var(--font-display); letter-spacing: .025em; }
+.turnstile-gate p { max-width: 680px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.turnstile-gate small { grid-column: 1 / -1; color: var(--dim); font-size: 10px; line-height: 1.5; }
+.turnstile-widget { min-height: 65px; }
+.turnstile-error { grid-column: 1 / -1; color: #ffd7dc; font-size: 12px; }
+.turnstile-gate > button { width: max-content; min-height: 40px; grid-column: 1 / -1; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: rgba(168, 77, 255, .18); font-weight: 700; }
+.turnstile-gate > button:hover { border-color: var(--cyan); background: rgba(22, 140, 255, .16); }
 .signal-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 12px var(--cyan); animation: signalPulse 2.2s ease-in-out infinite; }
 .guide-shell { width: calc(100% - 8.6%); min-width: 1000px; position: relative; margin: 28px 4.3% 80px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 20px 55px rgba(0, 0, 0, .28); }
 .guide-times { width: 100%; min-width: 1180px; height: 54px; display: grid; grid-template-columns: 260px repeat(9, minmax(115px, 1fr)); position: sticky; z-index: 7; top: 0; border-bottom: 1px solid var(--line); background: #050c17; }
@@ -448,6 +456,8 @@ main { min-height: calc(100vh - 122px); }
   .guide-controls select { width: 100%; min-width: 0; }
   .guide-status { height: auto; min-height: 48px; flex-wrap: wrap; padding: 10px 18px; }
   .guide-status span:last-child { width: 100%; margin-left: 16px; }
+  .turnstile-gate { grid-template-columns: minmax(0, 1fr); gap: 16px; margin: 18px 18px 0; padding: 20px 18px; }
+  .turnstile-gate small, .turnstile-error, .turnstile-gate > button { grid-column: 1; }
   .guide-shell { width: calc(100% - 36px); min-width: 0; margin: 20px 18px 112px; }
 
   .about-view { width: calc(100% - 36px); padding: 28px 0 112px; }

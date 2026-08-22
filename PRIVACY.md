@@ -1,86 +1,102 @@
-# CrowFlix privacy notice
+# Crow-Flix website privacy notice
 
-Last updated: 31 July 2026
+Last updated: 23 August 2026
 
-This notice describes the CrowFlix desktop application and the official
-CrowFlix source repository. It does not cover independent websites, catalogues,
-programme guides, media hosts, or streams that CrowFlix can open.
+This notice describes the independent Crow-Flix browser application at
+`https://crowflix.tv/` and its Crow-Flix relay. It does not describe the
+separate Tauri desktop application.
 
-## CrowFlix does not operate an account service
+## No Crow-Flix account or payment system
 
-CrowFlix has no CrowFlix account, advertising system, analytics SDK, telemetry
-service, or CrowFlix-operated media proxy. The application does not send usage
-history to a CrowFlix server.
+The website has no Crow-Flix account, login, advertising system, analytics SDK,
+checkout, subscription, payment, or Stripe integration. Crow-Flix does not
+centrally store a profile of what a visitor searches for, favourites, opens, or
+watches.
 
-This means the project does not centrally receive a list of what a user
-searches for, favourites, opens, or watches. It does not mean that network use
-is anonymous: every independent service contacted by the application can
-observe the request it receives.
+Network use is not anonymous. Cloudflare and each external service contacted by
+the application can receive the ordinary network information required to
+answer a request.
 
-## Data stored on the device
+## Data stored in the browser
 
-CrowFlix stores application preferences locally, including:
+The website stores the following data locally in browser storage:
 
 - favourite and recently opened channel identifiers;
-- user-added Web Library destinations;
-- observed source-health, cooldown, and preferred-source identifiers used for
-  playback failover; and
-- a cache of retrieved catalogue metadata used for startup and offline
+- user-managed Web Library destinations;
+- source-health, cooldown, and preferred-source identifiers used for playback
+  failover; and
+- cached catalogue metadata used for faster startup and stale-on-failure
   fallback.
 
-Guide data can also be held in memory while the application is running.
-Imported playlist and XMLTV files are parsed locally. CrowFlix does not upload
-those files to a CrowFlix-operated service.
+Guide data is held in memory while the application is open. Web Library export
+and import operate on files selected by the visitor and browser-local storage.
+They are not uploaded to Crow-Flix.
 
-Local WebView and operating-system components may maintain ordinary caches,
-network state, or diagnostic records outside CrowFlix’s own data structures.
-Anyone with access to the Windows account or its backups may be able to inspect
-locally stored CrowFlix data.
+To remove locally stored Crow-Flix data, clear site data for `crowflix.tv` in
+the browser. This removes local storage, Cache API entries, and ordinary browser
+caches associated with the site. Export any Web Library entries you want to
+retain before clearing site data.
 
-Closing CrowFlix stops the current session but does not erase saved favourites,
-recent items, Web Library destinations, or the catalogue cache. To remove all
-such data, close CrowFlix and clear its application data using Windows or remove
-the CrowFlix application-data directory. Back up anything you want to retain
-before doing so.
+## Network services
 
-## Network connections
+Depending on the feature used, the website can connect to:
 
-Depending on the feature used, CrowFlix can connect directly to:
+- Cloudflare Pages, which serves the website;
+- IPTV-org catalogue and metadata endpoints;
+- channel-logo and artwork hosts;
+- media hosts and content-delivery networks listed by the catalogue;
+- external Web Library destinations opened by the visitor;
+- the Crow-Flix relay for programme guides and sources that require provider
+  headers; and
+- Cloudflare Turnstile when a visitor requests live programme-guide data.
 
-- IPTV-org catalogue and playlist endpoints;
-- optional ApsatTV playlist endpoints;
-- EPGShare and GitHub-hosted XMLTV programme guides;
-- channel-logo hosts;
-- media hosts, content-delivery networks, and redirect targets named by a
-  playlist or catalogue;
-- a playlist, programme guide, or Web Library destination supplied by the
-  user; and
-- GitHub pages used for project, licence, security, or release information.
+External providers apply their own availability, geographic, account, storage,
+and privacy rules. Crow-Flix does not bypass those restrictions.
 
-The Web Library opens a selected destination outside the CrowFlix interface.
-The browser and destination then apply their own storage and privacy rules.
+## Crow-Flix relay
 
-An endpoint can ordinarily receive the user’s IP address, request time,
-requested URL, CrowFlix or media-player user agent, and other standard protocol
-headers. A playlist may specify a referrer or user-agent header needed for a
-source; CrowFlix can send those values to the named media host. Do not import a
-playlist containing credentials or private URLs unless you trust the source and
-understand where its requests go.
+The relay receives requests needed to provide programme guides and route
+header-dependent media. Those requests can include:
 
-CrowFlix does not control what an independent endpoint records, combines, or
-retains. Review that endpoint’s privacy policy and terms before using it.
+- the visitor IP address and request time;
+- the requested relay route;
+- guide country and channel identifiers;
+- media target information;
+- provider-requested User-Agent or Referer values where required; and
+- ordinary HTTP headers supplied by Cloudflare and the browser.
 
-## Repository and release services
+The relay validates external URLs and every redirect target against private and
+reserved-address restrictions. It deliberately does not log complete upstream
+URLs because they can contain query credentials. The relay does not bypass
+provider geographic, account, subscription, or token restrictions.
 
-GitHub processes information when someone visits the repository, downloads a
-release, opens an issue, submits a pull request, or uses private vulnerability
-reporting. GitHub’s own privacy terms govern that processing.
+## Cloudflare Turnstile
 
-Release downloads may also be delivered through GitHub’s content-delivery
-infrastructure or an official project download page. Those services receive the
-network information needed to provide the download.
+Turnstile runs only when live programme-guide retrieval needs verification. It
+protects the public relay from automated guide requests that can trigger large
+upstream downloads and XML parsing.
+
+Cloudflare processes browser and network security signals needed to distinguish
+automated traffic. Crow-Flix sends the resulting one-time token to the relay,
+which validates it with Cloudflare before loading guide data. Tokens expire
+after five minutes and are accepted only once.
+
+Crow-Flix does not attach search text, favourites, recent channels, Web Library
+content, channel lists, or other visitor content to Turnstile `cData`. Catalogue
+browsing and video playback do not require Turnstile.
+
+See Cloudflare's
+[Turnstile privacy information](https://www.cloudflare.com/turnstile-privacy-policy/)
+and [privacy policy](https://www.cloudflare.com/privacypolicy/) for Cloudflare's
+processing terms.
+
+## GitHub
+
+GitHub processes information when someone visits the source repository, opens
+an issue, submits a pull request, or uses private vulnerability reporting.
+GitHub's own privacy terms govern that processing.
 
 ## Changes to this notice
 
-Material privacy changes are documented in the repository and release notes.
-The date at the top identifies the current revision.
+Material privacy changes are documented in the repository. The date at the top
+identifies the current revision.

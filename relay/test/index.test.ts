@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 
 const call = (path: string, method = "GET"): Promise<Response> =>
   worker.fetch(new Request(`https://relay.example${path}`, { method }));
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("worker routing", () => {
   it("GET /health returns the service identity with CORS *", async () => {
@@ -87,9 +89,47 @@ describe("worker input validation (no network is touched)", () => {
     expect((await response.json()).error).toMatch(/ua parameter/);
   });
 
-  it("/epg without ids is a 400", async () => {
+  it("/epg fails closed before guide work when verification is unavailable", async () => {
     const response = await call("/epg?country=AU");
-    expect(response.status).toBe(400);
-    expect((await response.json()).error).toMatch(/at least one channel id/);
+    expect(response.status).toBe(503);
+    expect((await response.json()).error).toMatch(/verification is temporarily unavailable/i);
+  });
+
+  it("/epg validates Turnstile before guide work and is never HTTP-cached", async () => {
+    const guideUrl = "https://guides.example/au.xml";
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const href = input instanceof Request ? input.url : input.toString();
+      if (href.includes("/turnstile/v0/siteverify")) {
+        return new Response(JSON.stringify({
+          success: true,
+          hostname: "crowflix.tv",
+          action: "epg_load",
+        }), { status: 200 });
+      }
+      if (href === "https://iptv-org.github.io/api/guides.json") {
+        return new Response(JSON.stringify([
+          { channel: "ABC.au", sources: [{ url: guideUrl }] },
+        ]), { status: 200 });
+      }
+      if (href === guideUrl) {
+        return new Response(`<tv><programme start="20260823120000 +0000" stop="20260823130000 +0000" channel="ABC.au"><title>News</title></programme></tv>`, { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const response = await worker.fetch(new Request(
+      "https://relay.example/epg?country=AU&ids=ABC.au",
+      { headers: { "X-Turnstile-Token": "verified-token" } },
+    ), {
+      TURNSTILE_SECRET: "test-secret",
+      TURNSTILE_ALLOWED_HOSTNAMES: "crowflix.tv",
+      TURNSTILE_EXPECTED_ACTION: "epg_load",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect((await response.json()).matchedChannels).toBe(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe("https://challenges.cloudflare.com/turnstile/v0/siteverify");
   });
 });
