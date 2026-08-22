@@ -35,8 +35,10 @@ for (const file of [
   "src/App.css",
   "src/webCatalog.ts",
   "src/relayClient.ts",
+  "src/TurnstileGuideGate.tsx",
   "src/playback/usePlaybackController.ts",
   "relay/src/index.ts",
+  "relay/src/turnstile.ts",
   "RECOVERY-PROVENANCE.json",
   "dist/index.html",
   "dist/_headers",
@@ -85,9 +87,24 @@ for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSource", "<vi
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 assert(!app.includes("Download Crow-Flix for Windows"), "The browser app was replaced by a desktop download page");
+assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/PRIVACY.md"), "The About page does not link to the website privacy notice");
+assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/SECURITY.md"), "The About page does not link to the website security policy");
+assert(!app.includes("A cinematic desktop IPTV player"), "The About page still identifies the website as the desktop app");
 
 const relayClient = await readFile(path.join(repositoryRoot, "src", "relayClient.ts"), "utf8");
 assert(relayClient.includes(relayOrigin), "The browser app is not wired to the CrowFlix relay");
+assert(relayClient.includes("X-Turnstile-Token"), "Guide requests do not send the Turnstile token in a header");
+
+const turnstileGate = await readFile(path.join(repositoryRoot, "src", "TurnstileGuideGate.tsx"), "utf8");
+for (const value of ["https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit", "epg_load", "VITE_TURNSTILE_SITEKEY"]) {
+  assert(turnstileGate.includes(value), `Turnstile guide gate is missing: ${value}`);
+}
+
+const relayTurnstile = await readFile(path.join(repositoryRoot, "relay", "src", "turnstile.ts"), "utf8");
+for (const value of ["https://challenges.cloudflare.com/turnstile/v0/siteverify", "TURNSTILE_SECRET", "TURNSTILE_ALLOWED_HOSTNAMES", "TURNSTILE_EXPECTED_ACTION"]) {
+  assert(relayTurnstile.includes(value), `Relay Turnstile validation is missing: ${value}`);
+}
+assert(!relayTurnstile.includes("VITE_TURNSTILE_SECRET"), "The Turnstile secret is exposed as a Vite variable");
 
 const files = await walk(distRoot);
 assert(files.length <= 20_000, `Cloudflare Pages file limit exceeded: ${files.length}`);
@@ -114,7 +131,8 @@ for (const value of [
   "Content-Security-Policy:",
   "connect-src 'self' https:",
   "media-src 'self' blob: https:",
-  "script-src 'self'",
+  "script-src 'self' https://challenges.cloudflare.com",
+  "frame-src https://challenges.cloudflare.com",
   "Strict-Transport-Security:",
   "X-Content-Type-Options:",
   "X-Frame-Options:",
@@ -122,6 +140,12 @@ for (const value of [
   assert(headers.includes(value), `_headers is missing: ${value}`);
 }
 assert(!headers.includes("script-src 'none'"), "_headers still disables the browser application");
+assert(!headers.includes("unsafe-eval"), "_headers permits unsafe-eval");
+
+const privacy = await readFile(path.join(repositoryRoot, "PRIVACY.md"), "utf8");
+for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "does not attach search text", "clear site data for `crowflix.tv`"]) {
+  assert(privacy.includes(value), `PRIVACY.md is missing: ${value}`);
+}
 
 const robots = await readFile(path.join(distRoot, "robots.txt"), "utf8");
 const sitemap = await readFile(path.join(distRoot, "sitemap.xml"), "utf8");

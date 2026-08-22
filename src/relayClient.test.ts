@@ -1,5 +1,37 @@
-import { describe, expect, it } from "vitest";
-import { relayStreamUrl, toWebPlayableSource, RELAY_BASE } from "./relayClient";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  loadRelayGuide,
+  relayStreamUrl,
+  toWebPlayableSource,
+  RELAY_BASE,
+} from "./relayClient";
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("loadRelayGuide", () => {
+  it("sends the Turnstile token in a header, never the URL", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      programmes: [],
+      source: "test",
+      matchedChannels: 0,
+      updatedAt: "2026-08-23T00:00:00Z",
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await loadRelayGuide("AU", ["ABC.au"], "turnstile-token");
+    const [url, init] = fetcher.mock.calls[0] ?? [];
+    expect(String(url)).not.toContain("turnstile-token");
+    expect(init?.cache).toBe("no-store");
+    expect(new Headers(init?.headers).get("X-Turnstile-Token")).toBe("turnstile-token");
+  });
+
+  it("preserves the relay status on verification failure", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Complete browser verification." }), { status: 403 }),
+    ));
+    await expect(loadRelayGuide("AU", ["ABC.au"], "bad-token"))
+      .rejects.toMatchObject({ status: 403 });
+  });
+});
 
 describe("relayStreamUrl", () => {
   it("wraps the url with encoded provider headers", () => {

@@ -57,7 +57,12 @@ import {
 } from "./webDestinations";
 import { appendZapDigit, resolveZapNumber, zapTarget } from "./zap";
 import { loadWebCatalog } from "./webCatalog";
-import { loadRelayGuide, toWebPlayableSource } from "./relayClient";
+import {
+  loadRelayGuide,
+  RelayRequestError,
+  toWebPlayableSource,
+} from "./relayClient";
+import TurnstileGuideGate from "./TurnstileGuideGate";
 import "./App.css";
 
 const MASCOT_IMAGE = "/assets/brand/crow-mascot.png";
@@ -261,6 +266,8 @@ export default function App() {
   const [programmes, setProgrammes] = useState<Programme[]>([]);
   const [guideStatus, setGuideStatus] = useState("Preparing the live guide…");
   const [guideLoading, setGuideLoading] = useState(false);
+  const [guideNeedsVerification, setGuideNeedsVerification] = useState(false);
+  const [guideVerificationError, setGuideVerificationError] = useState<string | null>(null);
   const [playing, setPlaying] = useState<Channel | null>(null);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [sourceUrl, setSourceUrl] = useState("");
@@ -370,7 +377,11 @@ export default function App() {
     setRecent(migrate);
   }, [catalog.channels]);
 
-  const loadGuide = useCallback(async (code: string, force = false) => {
+  const loadGuide = useCallback(async (
+    code: string,
+    force = false,
+    turnstileToken?: string,
+  ) => {
     const targetCountry = canonicalCountryCode(code);
     const countryChannels = catalog.channels.filter(
       (channel) => channelMatchesCountry(
@@ -379,28 +390,55 @@ export default function App() {
         catalog.regions,
       ),
     );
-    if (!countryChannels.length) { setProgrammes([]); setGuideStatus(`No channels are available for ${countryName(targetCountry)}`); return; }
+    if (!countryChannels.length) {
+      setProgrammes([]);
+      setGuideNeedsVerification(false);
+      setGuideVerificationError(null);
+      setGuideStatus(`No channels are available for ${countryName(targetCountry)}`);
+      return;
+    }
     const cached = guideCache.current.get(targetCountry);
     if (cached && !force) {
       setProgrammes(cached.programmes);
+      setGuideNeedsVerification(false);
+      setGuideVerificationError(null);
       setGuideStatus(`${cached.source} · ${cached.matchedChannels.toLocaleString()} channels matched`);
       return;
     }
     if (!isDesktop) {
       if (catalog.source.includes("preview")) {
         const result: GuideResult = { programmes: makeDemoProgrammes(countryChannels), source: "CrowFlix preview guide", matchedChannels: countryChannels.length, updatedAt: new Date().toISOString() };
+        setGuideNeedsVerification(false);
+        setGuideVerificationError(null);
         guideCache.current.set(targetCountry, result); setProgrammes(result.programmes); setGuideStatus(`${result.source} · live now and up next`); return;
       }
+      if (!turnstileToken) {
+        setGuideNeedsVerification(true);
+        setGuideVerificationError(null);
+        setGuideStatus("Complete Cloudflare verification to load live programme data.");
+        return;
+      }
+      setGuideNeedsVerification(false);
+      setGuideVerificationError(null);
       setGuideLoading(true);
       setGuideStatus(`Matching ${countryName(targetCountry)} channels through the CrowFlix relay…`);
       try {
-        const result = await loadRelayGuide(targetCountry, uniqueChannelIds(countryChannels));
+        const result = await loadRelayGuide(
+          targetCountry,
+          uniqueChannelIds(countryChannels),
+          turnstileToken,
+        );
         guideCache.current.set(targetCountry, result);
         setProgrammes(result.programmes);
         setGuideStatus(`${result.source} · ${result.matchedChannels.toLocaleString()} channels matched`);
       } catch (error) {
         setProgrammes([]);
-        setGuideStatus(error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        setGuideStatus(message);
+        if (error instanceof RelayRequestError && error.status === 403) {
+          setGuideNeedsVerification(true);
+          setGuideVerificationError(message);
+        }
       } finally { setGuideLoading(false); }
       return;
     }
@@ -417,12 +455,14 @@ export default function App() {
     } finally { setGuideLoading(false); }
   }, [catalog.channels, catalog.regions, catalog.source, isDesktop]);
 
-  useEffect(() => { if (catalog.channels.length) void loadGuide(guideCountry); }, [catalog.channels, guideCountry, loadGuide]);
   useEffect(() => {
-    if (!catalog.channels.length) return;
+    if (view === "guide" && catalog.channels.length) void loadGuide(guideCountry);
+  }, [catalog.channels, guideCountry, loadGuide, view]);
+  useEffect(() => {
+    if (view !== "guide" || !catalog.channels.length) return;
     const timer = window.setInterval(() => { void loadGuide(guideCountry, true); }, 4 * 60 * 60 * 1000);
     return () => window.clearInterval(timer);
-  }, [catalog.channels.length, guideCountry, loadGuide]);
+  }, [catalog.channels.length, guideCountry, loadGuide, view]);
 
   const play = useCallback((channel: Channel) => {
     setPlaying((current) => {
@@ -650,7 +690,7 @@ export default function App() {
       <main>
         {view === "home" && <HomeView channels={catalog.channels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onInfo={() => setView("guide")} />}
         {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} />}
-        {view === "guide" && <GuideView catalog={catalog} country={guideCountry} setCountry={setGuideCountry} programmes={programmes} clock={clock} status={guideStatus} loading={guideLoading} onRefresh={() => void loadGuide(guideCountry, true)} onPlay={play} />}
+        {view === "guide" && <GuideView catalog={catalog} country={guideCountry} setCountry={setGuideCountry} programmes={programmes} clock={clock} status={guideStatus} loading={guideLoading} requiresVerification={!isDesktop && guideNeedsVerification} verificationError={guideVerificationError} onVerified={(token) => void loadGuide(guideCountry, true, token)} onVerificationError={(message) => { setGuideVerificationError(message || null); if (message) setGuideStatus(message); }} onRefresh={() => void loadGuide(guideCountry, true)} onPlay={play} />}
         {view === "web" && <WebDestinationsView items={webDestinations} query={query} onOpen={(item) => void openWebsite(item.url, item.title)} onSave={saveWebDestination} onDelete={deleteWebDestination} onImport={importWebDestinations} onMessage={showToast} />}
         {view === "favourites" && <FavouritesView channels={favouriteChannels} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onBrowse={() => setView("live")} />}
         {view === "about" && <AboutView onOpen={(url, title) => void openWebsite(url, title)} />}
@@ -757,7 +797,7 @@ function Pagination({ page, pageCount, onPage }: { page: number; pageCount: numb
   return <div className="pagination"><button disabled={page <= 1} onClick={() => onPage(page - 1)}><CaretLeft /> Previous</button><span>Page <strong>{page.toLocaleString()}</strong> of {pageCount.toLocaleString()}</span><button disabled={page >= pageCount} onClick={() => onPage(page + 1)}>Next <CaretRight /></button></div>;
 }
 
-function GuideView({ catalog, country, setCountry, programmes, clock, status, loading, onRefresh, onPlay }: { catalog: Catalog; country: string; setCountry: (value: string) => void; programmes: Programme[]; clock: Date; status: string; loading: boolean; onRefresh: () => void; onPlay: (channel: Channel) => void }) {
+function GuideView({ catalog, country, setCountry, programmes, clock, status, loading, requiresVerification, verificationError, onVerified, onVerificationError, onRefresh, onPlay }: { catalog: Catalog; country: string; setCountry: (value: string) => void; programmes: Programme[]; clock: Date; status: string; loading: boolean; requiresVerification: boolean; verificationError: string | null; onVerified: (token: string) => void; onVerificationError: (message: string) => void; onRefresh: () => void; onPlay: (channel: Channel) => void }) {
   const countryChannels = catalog.channels.filter(
     (channel) => channelMatchesCountry(channel, country, catalog.regions),
   );
@@ -766,7 +806,7 @@ function GuideView({ catalog, country, setCountry, programmes, clock, status, lo
   const start = new Date(clock); start.setMinutes(Math.floor(start.getMinutes() / 30) * 30, 0, 0);
   const end = new Date(start.getTime() + 4 * 60 * 60 * 1000);
   const times = Array.from({ length: 9 }, (_, index) => new Date(start.getTime() + index * 30 * 60 * 1000));
-  return <div className="guide-page"><div className="page-hero guide-title"><div><span className="overline"><CalendarDots /> Live programme guide</span><h1>What’s on now</h1><p>{clock.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</p></div><div className="guide-controls"><label><span>Guide region</span><select value={canonicalCountryCode(country)} onChange={(event) => setCountry(canonicalCountryCode(event.target.value))}>{catalog.countries.map((item) => <option key={item.code} value={canonicalCountryCode(item.code)}>{item.flag} {item.name} ({item.count.toLocaleString()})</option>)}</select></label><button onClick={onRefresh} disabled={loading}><ArrowsClockwise className={loading ? "spin" : ""} /> Refresh</button></div></div><div className="guide-status"><span className="signal-dot" /><strong>{loading ? "Updating live programme data…" : status}</strong><span>{byChannel.size.toLocaleString()} channels with listings</span></div><div className="guide-shell"><div className="guide-times"><div>Channel</div>{times.map((time) => <span key={time.toISOString()}>{formatTime(time)}</span>)}</div><div className="guide-now-line" style={{ left: `calc(260px + ${((clock.getTime() - start.getTime()) / (end.getTime() - start.getTime())) * 100}% * (1 - 260px / 100%))` }}><b>NOW</b></div>{channels.map((channel) => { const items = (byChannel.get(channel.id) || []).filter((item) => new Date(item.stop) > start && new Date(item.start) < end); return <div className="guide-row" key={channel.key}><button className="guide-channel" onClick={() => onPlay(channel)}>{channel.logo ? <img src={channel.logo} alt="" /> : <img src={BRAND_ICON} alt="" />}<span><strong>{channel.name}</strong><small>{titleCase(channel.categories[0])}</small></span></button><div className="programme-track">{items.length ? items.map((item) => { const itemStart = Math.max(start.getTime(), new Date(item.start).getTime()); const itemEnd = Math.min(end.getTime(), new Date(item.stop).getTime()); const left = ((itemStart - start.getTime()) / (end.getTime() - start.getTime())) * 100; const width = ((itemEnd - itemStart) / (end.getTime() - start.getTime())) * 100; const live = new Date(item.start) <= clock && new Date(item.stop) > clock; return <button key={`${item.channelId}-${item.start}`} className={live ? "live" : ""} style={{ left: `${left}%`, width: `${width}%` }} onClick={() => onPlay(channel)}><strong>{item.title}</strong><small>{formatTime(new Date(item.start))}–{formatTime(new Date(item.stop))}</small></button>; }) : <button className="no-listing" onClick={() => onPlay(channel)}><strong>Live broadcast</strong><small>Programme details unavailable</small></button>}</div></div>; })}</div>{!loading && !programmes.length && <EmptyState title="No programme listings matched" copy="The channels remain available to watch live while CrowFlix refreshes guide sources." />}</div>;
+  return <div className="guide-page"><div className="page-hero guide-title"><div><span className="overline"><CalendarDots /> Live programme guide</span><h1>What’s on now</h1><p>{clock.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</p></div><div className="guide-controls"><label><span>Guide region</span><select value={canonicalCountryCode(country)} onChange={(event) => setCountry(canonicalCountryCode(event.target.value))}>{catalog.countries.map((item) => <option key={item.code} value={canonicalCountryCode(item.code)}>{item.flag} {item.name} ({item.count.toLocaleString()})</option>)}</select></label><button onClick={onRefresh} disabled={loading}><ArrowsClockwise className={loading ? "spin" : ""} /> Refresh</button></div></div>{requiresVerification && <TurnstileGuideGate error={verificationError} onVerified={onVerified} onError={onVerificationError} />}<div className="guide-status"><span className="signal-dot" /><strong>{loading ? "Updating live programme data…" : status}</strong><span>{byChannel.size.toLocaleString()} channels with listings</span></div><div className="guide-shell"><div className="guide-times"><div>Channel</div>{times.map((time) => <span key={time.toISOString()}>{formatTime(time)}</span>)}</div><div className="guide-now-line" style={{ left: `calc(260px + ${((clock.getTime() - start.getTime()) / (end.getTime() - start.getTime())) * 100}% * (1 - 260px / 100%))` }}><b>NOW</b></div>{channels.map((channel) => { const items = (byChannel.get(channel.id) || []).filter((item) => new Date(item.stop) > start && new Date(item.start) < end); return <div className="guide-row" key={channel.key}><button className="guide-channel" onClick={() => onPlay(channel)}>{channel.logo ? <img src={channel.logo} alt="" /> : <img src={BRAND_ICON} alt="" />}<span><strong>{channel.name}</strong><small>{titleCase(channel.categories[0])}</small></span></button><div className="programme-track">{items.length ? items.map((item) => { const itemStart = Math.max(start.getTime(), new Date(item.start).getTime()); const itemEnd = Math.min(end.getTime(), new Date(item.stop).getTime()); const left = ((itemStart - start.getTime()) / (end.getTime() - start.getTime())) * 100; const width = ((itemEnd - itemStart) / (end.getTime() - start.getTime())) * 100; const live = new Date(item.start) <= clock && new Date(item.stop) > clock; return <button key={`${item.channelId}-${item.start}`} className={live ? "live" : ""} style={{ left: `${left}%`, width: `${width}%` }} onClick={() => onPlay(channel)}><strong>{item.title}</strong><small>{formatTime(new Date(item.start))}–{formatTime(new Date(item.stop))}</small></button>; }) : <button className="no-listing" onClick={() => onPlay(channel)}><strong>Live broadcast</strong><small>Programme details unavailable</small></button>}</div></div>; })}</div>{!loading && !programmes.length && !requiresVerification && <EmptyState title="No programme listings matched" copy="The channels remain available to watch live while CrowFlix refreshes guide sources." />}</div>;
 }
 
 function FavouritesView({ channels, favourites, programmes, clock, onPlay, onFavourite, onBrowse }: { channels: Channel[]; favourites: string[]; programmes: Programme[]; clock: Date; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onBrowse: () => void }) {
@@ -775,12 +815,12 @@ function FavouritesView({ channels, favourites, programmes, clock, onPlay, onFav
 
 function AboutView({ onOpen }: { onOpen: (url: string, title: string) => void }) {
   const links = [
-    ["Source code", "https://github.com/CrowLoki/Crow-Flix"],
-    ["Software licence", "https://github.com/CrowLoki/Crow-Flix/blob/main/LICENSE"],
-    ["Licensing details", "https://github.com/CrowLoki/Crow-Flix/blob/main/LICENSING.md"],
-    ["Third-party notices", "https://github.com/CrowLoki/Crow-Flix/blob/main/THIRD_PARTY_NOTICES.md"],
-    ["Privacy", "https://github.com/CrowLoki/Crow-Flix/blob/main/PRIVACY.md"],
-    ["Security", "https://github.com/CrowLoki/Crow-Flix/blob/main/SECURITY.md"],
+    ["Source code", "https://github.com/CrowLoki/Crow-Flix-Website"],
+    ["Software licence", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/LICENSE"],
+    ["Licensing details", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/LICENSING.md"],
+    ["Third-party notices", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/THIRD_PARTY_NOTICES.md"],
+    ["Privacy", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/PRIVACY.md"],
+    ["Security", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/SECURITY.md"],
   ] as const;
 
   return <section className="about-view">
@@ -789,7 +829,7 @@ function AboutView({ onOpen }: { onOpen: (url: string, title: string) => void })
       <div>
         <span className="overline"><Info weight="fill" /> About CrowFlix</span>
         <h1>CrowFlix <strong>0.5.1</strong></h1>
-        <p>A cinematic desktop IPTV player, programme guide, and user-managed web library built with Tauri, Rust, React, and TypeScript.</p>
+        <p>A cinematic browser IPTV player, programme guide, and user-managed web library built with React, TypeScript, Vite, and a Cloudflare relay.</p>
       </div>
     </div>
     <div className="about-grid">

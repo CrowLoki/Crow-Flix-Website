@@ -6,7 +6,20 @@
 
 import type { StreamSource } from "./playback/types";
 
-export const RELAY_BASE = "https://crowflix-relay.djdarren2056.workers.dev";
+export const RELAY_BASE = (
+  (import.meta.env.VITE_RELAY_BASE as string | undefined)?.trim()
+  || "https://crowflix-relay.djdarren2056.workers.dev"
+).replace(/\/+$/, "");
+
+export class RelayRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "RelayRequestError";
+    this.status = status;
+  }
+}
 
 export type RelayProgramme = {
   channelId: string;
@@ -29,15 +42,23 @@ const REQUEST_TIMEOUT_MS = 90_000;
 export async function loadRelayGuide(
   country: string,
   channelIds: string[],
+  turnstileToken: string,
 ): Promise<RelayGuideResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const query = new URLSearchParams({ country, ids: channelIds.join(",") });
-    const response = await fetch(`${RELAY_BASE}/epg?${query}`, { signal: controller.signal });
+    const response = await fetch(`${RELAY_BASE}/epg?${query}`, {
+      cache: "no-store",
+      headers: { "X-Turnstile-Token": turnstileToken },
+      signal: controller.signal,
+    });
     const body = await response.json() as RelayGuideResult & { error?: string };
     if (!response.ok || body.error) {
-      throw new Error(body.error || `Relay returned HTTP ${response.status}`);
+      throw new RelayRequestError(
+        response.status,
+        body.error || `Relay returned HTTP ${response.status}`,
+      );
     }
     return body;
   } finally {

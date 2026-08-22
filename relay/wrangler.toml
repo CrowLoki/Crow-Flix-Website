@@ -2,6 +2,17 @@ name = "crowflix-relay"
 main = "src/index.ts"
 compatibility_date = "2026-08-16"
 
+[vars]
+TURNSTILE_ALLOWED_HOSTNAMES = "crowflix.tv"
+TURNSTILE_EXPECTED_ACTION = "epg_load"
+
+[env.staging]
+name = "crowflix-relay-staging"
+
+[env.staging.vars]
+TURNSTILE_ALLOWED_HOSTNAMES = "*.crow-flix.pages.dev,localhost,127.0.0.1"
+TURNSTILE_EXPECTED_ACTION = "epg_load"
+
 # The deployer adds account_id / routes as needed. No runtime npm
 # dependencies: the Worker uses only Web standard APIs (fetch,
 # DecompressionStream, TextDecoder, ReadableStream/TransformStream).

@@ -11,6 +11,12 @@ Cloudflare Pages) the two things browsers cannot do themselves:
 3. **Bounded generic text fetch** (`/fetch`) — pull user-supplied M3U
    playlists and XMLTV guides for the web import feature.
 
+Programme-guide requests are protected by Cloudflare Turnstile. The browser
+sends a fresh one-time token in the `X-Turnstile-Token` header; the Worker calls
+Siteverify and requires success, action `epg_load`, and an allowed hostname
+before starting the guide pipeline. The secret is an encrypted Worker binding,
+never source code.
+
 The desktop (Tauri) app does not need this Worker; its Rust core already
 fetches directly. This mirrors that core logic — `load_auto_epg` and
 `parse_xmltv` in `src-tauri/src/lib.rs` — for the browser build.
@@ -28,6 +34,9 @@ If a stream is geo-blocked or needs an account/token, it stays blocked.
 cd relay
 npx wrangler deploy
 ```
+
+Bind `TURNSTILE_SECRET` separately in production and staging. The tracked
+configuration contains only the expected action and hostname allowlists.
 
 No build step, no runtime npm dependencies (Web standard APIs only: `fetch`,
 `DecompressionStream`, `TextDecoder`, `ReadableStream`). `wrangler.toml`
@@ -94,8 +103,10 @@ is returned as `description`):
 }
 ```
 
-Successful `/epg` responses carry `Cache-Control: public, max-age=300`
-(guide files update roughly hourly; caching saves Worker CPU).
+Successful `/epg` responses carry `Cache-Control: no-store`. Every guide
+request must reach the Worker so its one-time Turnstile token is validated;
+browser or shared HTTP caching must not bypass that check. Any future caching
+of upstream guide files belongs behind verification inside the Worker.
 
 Input rules: 1-2000 channel ids, each ≤ 200 chars, no control characters;
 `country` optional but must be 2-8 alphanumerics when present.
