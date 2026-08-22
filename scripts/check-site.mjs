@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = path.join(repositoryRoot, "public");
+const canonicalOrigin = "https://crowflix.tv";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -73,11 +74,27 @@ const requiredIndexText = [
   "https://github.com/CrowLoki/Crow-Flix/releases/tag/v0.5.1",
   "https://github.com/CrowLoki/Crow-Flix/tree/v0.5.1",
   "https://github.com/CrowLoki/Crow-Flix-Website",
-  "https://crow-flix.pages.dev/",
+  `<meta property="og:url" content="${canonicalOrigin}/"/>`,
+  `<meta property="og:image" content="${canonicalOrigin}/images/crowflix-app-preview.png"/>`,
+  `<meta name="twitter:image" content="${canonicalOrigin}/images/crowflix-app-preview.png"/>`,
+  `<link rel="canonical" href="${canonicalOrigin}/"/>`,
 ];
 for (const value of requiredIndexText) assert(index.includes(value), `index.html is missing: ${value}`);
+assert(!index.includes("crow-flix.pages.dev"), "index.html uses the infrastructure hostname as public identity");
 assert(!index.includes("/crowflix.html"), "index.html still links to the retired nested CrowFlix route");
 assert(!/<script\b/i.test(index), "index.html contains script despite a script-src 'none' policy");
+
+const robots = await readFile(path.join(publicRoot, "robots.txt"), "utf8");
+assert(robots.includes(`Sitemap: ${canonicalOrigin}/sitemap.xml`), "robots.txt has the wrong sitemap origin");
+
+const sitemap = await readFile(path.join(publicRoot, "sitemap.xml"), "utf8");
+assert(sitemap.includes(`<loc>${canonicalOrigin}/</loc>`), "sitemap.xml has the wrong canonical origin");
+
+const securityText = await readFile(path.join(publicRoot, ".well-known", "security.txt"), "utf8");
+assert(
+  securityText.includes(`Canonical: ${canonicalOrigin}/.well-known/security.txt`),
+  "security.txt has the wrong canonical URL",
+);
 
 const textFiles = files.filter((file) => /\.(?:css|html|svg|txt|xml)$|[\\/](?:_headers|_redirects)$/i.test(file));
 const forbiddenPatterns = [

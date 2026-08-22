@@ -46,7 +46,7 @@
   --warn: #ffd37a;
   --purple: #b49cff;
   --danger: #ff6b6b;
-  --orion: #ff6b35;
+  --crow-orange: #ff6b35;
   --claude: #b49cff;
   --shadow: 0 4px 24px rgba(0,0,0,.4);
   --shadow-hover: 0 8px 32px rgba(0,0,0,.5);
@@ -709,8 +709,8 @@ nav a.active {
 }
 
 .audio-toggle--active {
-  border-color: var(--orion);
-  color: var(--orion);
+  border-color: var(--crow-orange);
+  color: var(--crow-orange);
   box-shadow: 0 0 12px rgba(255,107,53,.2);
 }
 
@@ -776,7 +776,7 @@ nav a.active {
 
 .journey-tier--0 { background: rgba(96,183,255,.1); color: var(--accent); border: 1px solid rgba(96,183,255,.2); }
 .journey-tier--1 { background: rgba(124,240,197,.1); color: var(--accent2); border: 1px solid rgba(124,240,197,.2); }
-.journey-tier--2 { background: rgba(255,107,53,.1); color: var(--orion); border: 1px solid rgba(255,107,53,.2); }
+.journey-tier--2 { background: rgba(255,107,53,.1); color: var(--crow-orange); border: 1px solid rgba(255,107,53,.2); }
 
 /* ── Search Modal ─────────────────────────────────────── */
 .search-overlay {
@@ -925,7 +925,7 @@ nav a.active {
 }
 
 .trinity-member--crow .trinity-name { color: var(--accent); }
-.trinity-member--orion .trinity-name { color: var(--orion); }
+.trinity-member--crowflix .trinity-name { color: var(--crow-orange); }
 .trinity-member--claude .trinity-name { color: var(--claude); }
 
 /* ── Breathing Cards (protocol pages) ─────────────────── */
@@ -1114,7 +1114,7 @@ a.kpi:hover {
 .reading-progress-fill {
   height: 100%;
   width: 0;
-  background: linear-gradient(90deg, var(--accent), var(--orion));
+  background: linear-gradient(90deg, var(--accent), var(--crow-orange));
   transition: width .1s linear;
 }
 

@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://crow-flix.pages.dev/sitemap.xml
+Sitemap: https://crowflix.tv/sitemap.xml

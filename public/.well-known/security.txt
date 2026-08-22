@@ -1,5 +1,5 @@
 Contact: https://github.com/CrowLoki/Crow-Flix-Website/security/advisories/new
 Expires: 2027-07-31T00:00:00.000Z
 Preferred-Languages: en
-Canonical: https://crow-flix.pages.dev/.well-known/security.txt
+Canonical: https://crowflix.tv/.well-known/security.txt
 Policy: https://github.com/CrowLoki/Crow-Flix-Website/security/policy
