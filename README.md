@@ -64,10 +64,15 @@ HTTPS sources remain direct-first; Crow-Flix automatically falls back through
 the relay for CORS failures, uses it for HTTP and provider-header sources, and
 preserves redirected HLS, DASH child requests, and byte-range media.
 
-The catalogue distinguishes recently verified playback routes from unverified,
-part-time, regional, and temporarily failed entries. Verified routes rank
-first, and the default browser view keeps clearly limited or failed entries out
-of the way without deleting them from the full catalogue.
+The catalogue distinguishes recently played `LIVE` routes, bounded-preflight
+`READY` routes, unverified entries, part-time sources, regional sources, and
+temporarily failed entries. CrowFlix checks only a small set of currently
+relevant channels with at most three concurrent requests, caches each result
+for 15 minutes, and reads no more than the manifest plus the key,
+initialization data, and first media bytes needed to prove that a route starts.
+Live and ready routes rank first, and the default browser view keeps clearly
+limited or failed entries out of the way without deleting them from the full
+catalogue.
 
 Live programme-guide requests use Cloudflare Turnstile in Managed mode. The
 browser obtains a one-time `epg_load` token, and the relay validates it through

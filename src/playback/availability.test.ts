@@ -47,6 +47,19 @@ describe("channel availability", () => {
     }, now)).toBe("verified");
   });
 
+  it("marks a channel READY after a bounded route preflight", () => {
+    const item = source("https://example.test/live.m3u8");
+    const now = 100_000;
+    expect(channelAvailability({ sources: [item] }, {}, now, {
+      [`${sourceIdentifier(item)}:direct`]: {
+        status: "ready",
+        checkedAt: now - 1,
+        transport: "hls",
+      },
+    })).toBe("ready");
+    expect(availabilityLabel("ready")).toBe("READY");
+  });
+
   it("separates region, part-time, offline, and unverified channels", () => {
     const geo = source("https://example.test/geo.m3u8", "Geo-blocked");
     const partTime = source("https://example.test/part.m3u8", "Not 24/7");
@@ -68,6 +81,23 @@ describe("channel availability", () => {
     expect(channelAvailability({ sources: [item] }, {
       [`${sourceIdentifier(item)}:direct`]: { failures: 1, cooldownUntil: now + 1 },
     }, now)).toBe("unverified");
+  });
+
+  it("marks a channel offline only after every browser route fails a fresh preflight", () => {
+    const item = source("https://example.test/live.m3u8");
+    const now = 100_000;
+    expect(channelAvailability({ sources: [item] }, {}, now, {
+      [`${sourceIdentifier(item)}:direct`]: {
+        status: "offline",
+        checkedAt: now - 1,
+        transport: "hls",
+      },
+      [`${sourceIdentifier(item)}:relay`]: {
+        status: "offline",
+        checkedAt: now - 1,
+        transport: "hls",
+      },
+    })).toBe("temporarily-offline");
   });
 
   it("recognises negated geo labels as ordinary sources", () => {
@@ -117,7 +147,7 @@ describe("channel availability", () => {
       { sources: [source("https://example.test/b.m3u8", "Geo-blocked")] },
       { sources: [source("https://example.test/c.m3u8", "Not always on")] },
     ]);
-    expect(summary).toMatchObject({ unverified: 1, "region-limited": 1, "part-time": 1 });
+    expect(summary).toMatchObject({ ready: 0, unverified: 1, "region-limited": 1, "part-time": 1 });
     expect(availabilityLabel("unverified")).toBe("CHECK");
     expect(availabilityLabel("region-limited")).toBe("REGION");
   });

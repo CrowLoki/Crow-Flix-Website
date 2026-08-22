@@ -18,6 +18,7 @@ import {
   shouldFallback,
 } from "./logic";
 import { probeSource } from "./nativeFetch";
+import { orderSourcesByPreflight, readSourcePreflights } from "./preflight";
 import {
   type PlaybackDiagnostic,
   type PlaybackFailureReason,
@@ -561,8 +562,12 @@ export class PlaybackRun {
 
   private refreshSourceOrder(): void {
     const preferred = readRecord<string>(PREFERRED_STORAGE_KEY)[this.channel.key];
-    this.orderedSources = orderPlaybackSources(
+    const readinessOrdered = orderSourcesByPreflight(
       this.channel.sources,
+      readSourcePreflights(),
+    );
+    this.orderedSources = orderPlaybackSources(
+      readinessOrdered,
       this.health,
       preferred,
     );

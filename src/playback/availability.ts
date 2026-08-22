@@ -1,9 +1,14 @@
 import { type SourceHealth, type StreamSource, sourceIdentifier } from "./types";
+import {
+  isFreshPreflight,
+  type SourcePreflight,
+} from "./preflight";
 
 export const VERIFIED_AVAILABILITY_TTL_MS = 12 * 60 * 60 * 1000;
 
 export type ChannelAvailability =
   | "verified"
+  | "ready"
   | "unverified"
   | "part-time"
   | "region-limited"
@@ -54,6 +59,7 @@ export function channelAvailability(
   channel: ChannelLike,
   health: Record<string, SourceHealth> = {},
   now = Date.now(),
+  preflights: Record<string, SourcePreflight> = {},
 ): ChannelAvailability {
   if (channel.sources.some((source) => {
     return sourceHealthStates(source, health).some((state) => {
@@ -62,6 +68,15 @@ export function channelAvailability(
     });
   })) {
     return "verified";
+  }
+
+  if (channel.sources.some((source) => {
+    return expectedBrowserRouteKeys(source).some((key) => {
+      const result = preflights[key];
+      return isFreshPreflight(result, now) && result.status === "ready";
+    });
+  })) {
+    return "ready";
   }
 
   if (
@@ -82,6 +97,10 @@ export function channelAvailability(
     channel.sources.length > 0
     && channel.sources.every((source) => {
       return expectedBrowserRouteKeys(source).every((key) => {
+        const preflight = preflights[key];
+        if (isFreshPreflight(preflight, now)) {
+          return preflight.status === "offline";
+        }
         const state = health[key];
         return Boolean(state?.failures && (state.cooldownUntil || 0) > now);
       });
@@ -96,10 +115,11 @@ export function channelAvailability(
 export function availabilityRank(value: ChannelAvailability): number {
   switch (value) {
     case "verified": return 0;
-    case "unverified": return 1;
-    case "part-time": return 2;
-    case "region-limited": return 3;
-    case "temporarily-offline": return 4;
+    case "ready": return 1;
+    case "unverified": return 2;
+    case "part-time": return 3;
+    case "region-limited": return 4;
+    case "temporarily-offline": return 5;
   }
 }
 
@@ -107,9 +127,10 @@ export function channelReliabilityScore(
   channel: ChannelLike,
   health: Record<string, SourceHealth> = {},
   now = Date.now(),
+  preflights: Record<string, SourcePreflight> = {},
 ): number {
-  const availability = channelAvailability(channel, health, now);
-  const availabilityScore = (4 - availabilityRank(availability)) * 10_000;
+  const availability = channelAvailability(channel, health, now, preflights);
+  const availabilityScore = (5 - availabilityRank(availability)) * 10_000;
   const normalSources = channel.sources.filter(
     (source) => !isRegionLimited(source) && !isPartTime(source),
   ).length;
@@ -126,10 +147,11 @@ export function rankChannelsByAvailability<T extends ChannelLike & { name: strin
   channels: T[],
   health: Record<string, SourceHealth> = {},
   now = Date.now(),
+  preflights: Record<string, SourcePreflight> = {},
 ): T[] {
   return [...channels].sort((left, right) =>
-    channelReliabilityScore(right, health, now)
-    - channelReliabilityScore(left, health, now)
+    channelReliabilityScore(right, health, now, preflights)
+    - channelReliabilityScore(left, health, now, preflights)
     || left.name.localeCompare(right.name));
 }
 
@@ -137,16 +159,18 @@ export function summarizeAvailability(
   channels: ChannelLike[],
   health: Record<string, SourceHealth> = {},
   now = Date.now(),
+  preflights: Record<string, SourcePreflight> = {},
 ): AvailabilitySummary {
   const summary: AvailabilitySummary = {
     verified: 0,
+    ready: 0,
     unverified: 0,
     "part-time": 0,
     "region-limited": 0,
     "temporarily-offline": 0,
   };
   for (const channel of channels) {
-    summary[channelAvailability(channel, health, now)] += 1;
+    summary[channelAvailability(channel, health, now, preflights)] += 1;
   }
   return summary;
 }
@@ -154,6 +178,7 @@ export function summarizeAvailability(
 export function availabilityLabel(value: ChannelAvailability): string {
   switch (value) {
     case "verified": return "LIVE";
+    case "ready": return "READY";
     case "unverified": return "CHECK";
     case "part-time": return "PART-TIME";
     case "region-limited": return "REGION";
