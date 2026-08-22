@@ -16,7 +16,7 @@ https://github.com/CrowLoki/Crow-Flix by Crow or expressly designated by Crow
 as official.
 
 “Official CrowFlix Website” means the website published by Crow from
-https://github.com/CrowLoki/Crow-Flix-Site or its official Cloudflare Pages
+https://github.com/CrowLoki/Crow-Flix-Website or its official Cloudflare Pages
 deployment.
 
 2. Permission
