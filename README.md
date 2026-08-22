@@ -29,18 +29,28 @@ npm run check
 The checker verifies required files, internal links, release metadata, security
 headers, Cloudflare limits, and common credential or workstation-path leaks.
 
-## Cloudflare Pages
+## Production and Cloudflare Pages
 
 This repository is connected directly to Cloudflare Pages through its GitHub
-integration. The production site is
-[crow-flix.pages.dev](https://crow-flix.pages.dev/).
+integration. The canonical production site is
+[crowflix.tv](https://crowflix.tv/). The `www.crowflix.tv` hostname permanently
+redirects to the canonical hostname while preserving the requested path and
+query string.
 
 - Cloudflare project: `crow-flix`
+- Canonical public origin: `https://crowflix.tv/`
+- Cloudflare infrastructure hostname: `https://crow-flix.pages.dev/`
+- GitHub source: `CrowLoki/Crow-Flix-Website`
 - Production branch: `main`
 - Framework preset: None
 - Root directory: `/`
 - Build command: `npm run check`
 - Build output directory: `public`
+
+The production path is a push or merged pull request on GitHub `main`, followed
+by the existing Cloudflare Pages Git integration running the check command and
+publishing only `public/`. Do not replace this project with a Direct Upload
+deployment or a second Pages project.
 
 Only the allowlisted `public` directory is deployed. Repository documentation,
 checks, workflows, and licensing material do not become website routes.
