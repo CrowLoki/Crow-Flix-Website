@@ -1,18 +1,48 @@
 {
   "name": "crow-flix-website",
-  "version": "0.1.0",
   "private": true,
-  "description": "Official static download and information site for the CrowFlix Windows desktop application",
+  "version": "0.5.1",
+  "description": "The official browser-streaming Crow-Flix application",
+  "author": "Crow",
   "license": "AGPL-3.0-only",
   "homepage": "https://crowflix.tv/",
   "repository": {
     "type": "git",
     "url": "https://github.com/CrowLoki/Crow-Flix-Website.git"
   },
-  "engines": {
-    "node": ">=22"
+  "bugs": {
+    "url": "https://github.com/CrowLoki/Crow-Flix-Website/issues"
   },
+  "type": "module",
   "scripts": {
-    "check": "node scripts/check-site.mjs"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "relay:typecheck": "tsc --noEmit -p relay/tsconfig.json",
+    "check": "npm run typecheck && npm run test && npm run relay:typecheck && npm run build && node scripts/check-site.mjs"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@phosphor-icons/react": "^2.1.10",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-http": "2.5.9",
+    "dashjs": "^5.2.1",
+    "hls.js": "^1.7.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "typescript": "~5.8.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
   }
 }

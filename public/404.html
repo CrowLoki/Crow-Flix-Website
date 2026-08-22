@@ -1,29 +1,27 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<meta name="robots" content="noindex"/>
-<title>Page not found — Crow-Flix</title>
-<link rel="icon" href="/favicon.png" type="image/png"/>
-<link rel="stylesheet" href="/styles.css"/>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Page not found — Crow-Flix</title>
+  <link rel="icon" href="/assets/brand/crow-head.png" type="image/png" />
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #030711; color: #eef7ff; }
+    body { min-height: 100vh; display: grid; place-items: center; margin: 0; background: radial-gradient(circle at 50% 20%, #251050, #030711 60%); }
+    main { width: min(42rem, calc(100% - 3rem)); padding: 3rem; border: 1px solid #5ee7ff55; border-radius: 1.5rem; background: #07101ddd; text-align: center; }
+    img { width: min(14rem, 60vw); height: auto; }
+    h1 { margin: 1rem 0 .5rem; font-size: clamp(2.5rem, 8vw, 5rem); }
+    p { color: #b8c6da; line-height: 1.6; }
+    a { display: inline-block; margin-top: 1rem; padding: .8rem 1.2rem; border-radius: .7rem; background: #5ee7ff; color: #031018; font-weight: 800; text-decoration: none; }
+  </style>
 </head>
-<body class="crowflix-page">
-<main id="main" class="wrap crowflix-main">
-<section class="crowflix-hero" aria-labelledby="not-found-title">
-<div class="crowflix-copy">
-<div class="crowflix-eyebrow">404 — SIGNAL NOT FOUND</div>
-<h1 id="not-found-title">Wrong <span>perch.</span></h1>
-<p class="crowflix-lead">That Crow-Flix page does not exist or has moved.</p>
-<div class="crowflix-actions">
-<a class="cta crowflix-download" href="/">Return to Crow-Flix</a>
-<a class="cta crowflix-secondary" href="https://github.com/CrowLoki/Crow-Flix/releases/latest">Latest release</a>
-</div>
-</div>
-<div class="crowflix-mascot">
-<img src="/images/crowflix-mascot.png" alt="Crow-Flix cybernetic three-eyed crow mascot"/>
-</div>
-</section>
-</main>
+<body>
+  <main>
+    <img src="/assets/brand/crow-mascot.png" alt="Crow-Flix cybernetic crow mascot" />
+    <h1>Signal not found.</h1>
+    <p>That route does not exist. Return to the Crow-Flix browser player to browse and watch.</p>
+    <a href="/">Open Crow-Flix</a>
+  </main>
 </body>
 </html>

@@ -6,9 +6,10 @@ This repository uses a split licensing model.
 
 ## Website code and documentation
 
-Unless a file says otherwise, HTML, CSS, validation scripts, configuration,
-workflows, and original documentation are licensed under the GNU Affero General
-Public License, version 3 only (`AGPL-3.0-only`). The complete licence is in
+Unless a file says otherwise, React and TypeScript source, HTML, CSS, relay
+source, validation scripts, configuration, workflows, and original
+documentation are licensed under the GNU Affero General Public License,
+version 3 only (`AGPL-3.0-only`). The complete licence is in
 [`LICENSE`](LICENSE), with a second standard-location copy in
 [`LICENSES/AGPL-3.0-only.txt`](LICENSES/AGPL-3.0-only.txt).
 
@@ -21,10 +22,7 @@ website to those projects or their maintainers.
 
 The following are not licensed under the AGPL:
 
-- `public/favicon.png`
-- `public/images/**`
-- `public/assets/fonts/**`
-- `public/assets/cursors/**`
+- `public/assets/brand/**`
 
 They are official CrowFlix identity assets and are licensed only under
 [`LicenseRef-Crow-Brand`](LICENSES/LicenseRef-Crow-Brand.txt). The licence
@@ -35,11 +33,16 @@ product, service, merchandise, impersonation, or endorsement.
 See [`BRAND-ASSETS.md`](BRAND-ASSETS.md) and
 [`ASSET-MANIFEST.sha256`](ASSET-MANIFEST.sha256) for the included inventory.
 
-## CrowFlix desktop releases
+## Recovered browser lineage
 
-The installer and checksum linked by this website are hosted by the separate
-`CrowLoki/Crow-Flix` release repository. They are not stored in this website
-repository and retain the licensing and notices shipped with that release.
+The browser frontend and relay were recovered from the last verified
+`crow-flix-web` source commit in the separate `CrowLoki/Crow-Flix` repository.
+They now live in this repository as the independent website source. The Tauri
+wrapper, Rust backend, Windows installer, and desktop release tooling remain
+outside this repository.
+
+Third-party components used by the browser application retain their own terms.
+See `THIRD_PARTY_NOTICES.md` and `THIRD_PARTY_LICENSES.txt`.
 
 ## External services
 
