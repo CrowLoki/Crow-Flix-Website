@@ -1,68 +1,77 @@
 # Crow-Flix-Website
 
-Official static information and download website for the
-[CrowFlix Windows desktop application](https://github.com/CrowLoki/Crow-Flix).
+The official browser-streaming Crow-Flix application at
+[crowflix.tv](https://crowflix.tv/).
+
+Open the website, browse the real catalogue, choose a channel, and watch in the
+browser. The application includes search, categories, regions, favourites,
+recent channels, programme guides, source failover, HLS and MPEG-DASH playback,
+hardware-style zapping, and the user-managed Web Library.
 
 ## Project identity
 
-Crow-Flix-Website is an original, independent project created and owned by
-Crow. It is maintained separately from Crow's other projects; shared Crow-owned
-branding does not make this website a clone, fork, continuation, or derivative
-of another product.
+Crow-Flix-Website is an original project created and owned by Crow. It is the
+independent web deployment of Crow-Flix, not a desktop installer page and not a
+replacement for the separate Tauri desktop repository.
 
-References to third-party services document their technical roles and terms.
-They do not assign ownership or authorship of Crow-Flix-Website to those
-services or their maintainers.
+The browser frontend was recovered from the final verified production source
+of the former `crow-flix-web` Pages deployment:
 
-The desktop application and this website are separate projects:
+```text
+CrowLoki/Crow-Flix commit 681139b6afc9189fec53a2e45b31a2bc08c2e4a3
+Cloudflare deployment 48e4fc15-8acd-4747-b620-c648c7f1d48b
+```
 
-- `CrowLoki/Crow-Flix` contains the Tauri desktop source and release assets.
-- `CrowLoki/Crow-Flix-Website` contains this static website only.
+The recovered browser source now lives here so the public website and desktop
+application can be maintained as separate projects.
+
+Machine-readable recovery evidence is preserved in `RECOVERY-PROVENANCE.json`.
 
 ## Local verification
 
 ```console
 npm ci
 npm run check
+npm audit --audit-level=moderate
 ```
 
-The checker verifies required files, internal links, release metadata, security
-headers, Cloudflare limits, and common credential or workstation-path leaks.
+`npm run check` type-checks the source, runs the frontend and relay test suites,
+builds the browser application, and validates the deployable `dist/` tree,
+canonical metadata, security headers, Crow brand assets, and common secret or
+workstation-path leaks.
 
-## Production and Cloudflare Pages
+For local browser development:
 
-This repository is connected directly to Cloudflare Pages through its GitHub
-integration. The canonical production site is
-[crowflix.tv](https://crowflix.tv/). The `www.crowflix.tv` hostname permanently
-redirects to the canonical hostname while preserving the requested path and
-query string.
+```console
+npm run dev
+```
 
-- Cloudflare project: `crow-flix`
-- Canonical public origin: `https://crowflix.tv/`
-- Cloudflare infrastructure hostname: `https://crow-flix.pages.dev/`
+## Cloudflare deployment
+
+- Canonical site: `https://crowflix.tv/`
+- `www` redirect: `https://www.crowflix.tv/` -> canonical apex
+- Pages project: `crow-flix`
 - GitHub source: `CrowLoki/Crow-Flix-Website`
 - Production branch: `main`
-- Framework preset: None
-- Root directory: `/`
 - Build command: `npm run check`
-- Build output directory: `public`
+- Output directory: `dist`
+- Infrastructure hostname: `https://crow-flix.pages.dev/`
 
-The production path is a push or merged pull request on GitHub `main`, followed
-by the existing Cloudflare Pages Git integration running the check command and
-publishing only `public/`. Do not replace this project with a Direct Upload
-deployment or a second Pages project.
+The existing Git-connected Pages project publishes merged `main` commits. The
+browser app calls the separately deployed `crowflix-relay` Worker for live EPG
+data and header-aware playback where a normal browser cannot supply provider
+headers.
 
-Only the allowlisted `public` directory is deployed. Repository documentation,
-checks, workflows, and licensing material do not become website routes.
+## Content and availability
 
-## Release updates
-
-When CrowFlix publishes a new desktop release, update the version, installer
-URL, installer size, checksum, release tag, and source tag in
-`public/index.html`, then run `npm run check` before publishing.
+Crow-Flix does not host, sell, or relicense television channels. It consumes
+metadata and source information published by configured upstream services.
+Provider availability, permissions, geographic restrictions, and account
+requirements remain in force. The relay supplies normal provider-requested
+headers; it does not bypass access controls.
 
 ## Licensing
 
 Website code and documentation are licensed under `AGPL-3.0-only`. Crow brand
-assets use the separate `LicenseRef-Crow-Brand` terms. See
-[`LICENSING.md`](LICENSING.md).
+assets use the separate `LicenseRef-Crow-Brand` terms. See `LICENSING.md`,
+`BRAND-ASSETS.md`, `ASSET-MANIFEST.sha256`, and `THIRD_PARTY_NOTICES.md`.

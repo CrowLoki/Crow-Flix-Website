@@ -1,48 +1,53 @@
 # Crow-Flix Website project guidance
 
-## Project boundary
+## Product boundary
 
-- This folder is the independent static website source for Crow-Flix.
-- The canonical local checkout is
-  `C:\Users\djdar\Documents\Crow-Flix-Website`. Keep it as a clean `main`
-  checkout and perform changes in a separate worktree created from
-  `origin/main`.
-- The canonical GitHub repository is `CrowLoki/Crow-Flix-Website`.
-- The Crow-Flix desktop application has its own repository at
-  `CrowLoki/Crow-Flix`; do not copy desktop source, build output, or runtime data
-  into this website repository.
-- Treat the installed desktop application and its app data as separate runtime
-  state. Do not reinstall, replace, or modify them from this project.
+- This repository is the independent browser-streaming Crow-Flix website.
+- A visitor opens `https://crowflix.tv/`, browses the live catalogue, selects a
+  channel, and watches in the browser. Do not replace the player with a desktop
+  download or information page.
+- The browser source was recovered from the last verified `crow-flix-web`
+  production deployment, which used `CrowLoki/Crow-Flix` commit
+  `681139b6afc9189fec53a2e45b31a2bc08c2e4a3`.
+- The separate Tauri desktop application remains in `CrowLoki/Crow-Flix`. Do not
+  modify its source, releases, installed files, or application data from this
+  repository.
+- The shared visual identity and recovered frontend lineage do not merge the
+  website and desktop repositories into one project.
 
 ## Stack and commands
 
-- Stack: static HTML and CSS with a Node.js validation script.
-- Install the locked toolchain state with `npm ci`.
-- Run all repository checks with `npm run check`.
+- Stack: React, TypeScript, Vite, HLS.js, DASH.js, and a separately deployed
+  Cloudflare relay Worker.
+- Install the locked dependencies with `npm ci`.
+- Run all website checks and generate the deployable build with `npm run check`.
+- Run the development site with `npm run dev`.
+- Run the built site locally with `npm run preview`.
 - Cloudflare Pages project: `crow-flix`.
-- Production branch: `main`; deployable output is limited to `public/`.
+- Production branch: `main`.
+- Build command: `npm run check`.
+- Build output directory: `dist`.
 - Canonical public origin: `https://crowflix.tv/`.
-- `https://www.crowflix.tv/` must permanently redirect to the canonical origin
-  while preserving the path and query string.
-- `https://crow-flix.pages.dev/` is the underlying Cloudflare Pages hostname,
-  not the public canonical identity.
+- `https://www.crowflix.tv/` permanently redirects to the canonical origin.
 
 ## Deployment path
 
 - Production deploys through the existing Cloudflare Pages GitHub integration:
-  `CrowLoki/Crow-Flix-Website` `main` -> `npm run check` -> `public/`.
-- Preserve that Git-connected project. Do not replace it with Direct Upload,
-  create another Pages project, or recreate the retired `crow-flix-web` project.
-- Keep both `crowflix.tv` and `www.crowflix.tv` attached to the existing
-  `crow-flix` Pages project and preserve the canonical `www` redirect.
+  `CrowLoki/Crow-Flix-Website` `main` -> `npm run check` -> `dist/`.
+- Preserve the existing `crow-flix` Pages project, custom domains, proxied DNS,
+  TLS, and Git connection. Do not create another Pages project or use Direct
+  Upload as a replacement.
+- The browser app uses the existing `crowflix-relay` Worker for live programme
+  guides and sources that require provider headers. The relay does not bypass
+  geographic, account, or provider restrictions.
 
 ## Repository rules
 
 - Keep `package-lock.json` committed.
-- Keep documentation, workflows, validation scripts, and licences outside
-  `public/`; only public website assets belong in the deployable directory.
-- Preserve the Crow brand licence and asset manifest when changing brand files.
-- Keep desktop release links pinned to a verified official release and update
-  all version, checksum, size, tag, and source references together.
-- Before committing, run `npm run check` and report anything that could not be
-  verified.
+- Keep `dist/`, `node_modules/`, logs, caches, and generated output untracked.
+- Preserve Crow ownership, the Crow brand licence, the asset manifest, privacy
+  disclosures, and third-party notices.
+- Keep canonical, Open Graph, robots, sitemap, and security metadata aligned
+  with `https://crowflix.tv/`.
+- Before committing, run `npm ci`, `npm run check`, `npm audit
+  --audit-level=moderate`, and `git diff --check`.

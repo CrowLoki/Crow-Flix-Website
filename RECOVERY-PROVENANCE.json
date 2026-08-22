@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "website_repository": "CrowLoki/Crow-Flix-Website",
+  "recovered_product": "Crow-Flix browser streaming application",
+  "recovered_from": {
+    "source_repository": "CrowLoki/Crow-Flix",
+    "source_commit": "681139b6afc9189fec53a2e45b31a2bc08c2e4a3",
+    "cloudflare_pages_project": "crow-flix-web",
+    "cloudflare_pages_project_id": "840a57fa-2542-4622-bbee-5803382e3ae1",
+    "cloudflare_deployment_id": "48e4fc15-8acd-4747-b620-c648c7f1d48b",
+    "cloudflare_deployment_created_utc": "2026-08-20T07:24:03.543886Z",
+    "cloudflare_project_deleted_utc": "2026-08-22T11:50:36.580000Z"
+  },
+  "runtime_dependencies": {
+    "relay_origin": "https://crowflix-relay.djdarren2056.workers.dev",
+    "relay_health": "https://crowflix-relay.djdarren2056.workers.dev/health"
+  },
+  "recovery_boundaries": {
+    "desktop_repository_modified": false,
+    "desktop_runtime_modified": false,
+    "crowbot_modified": false,
+    "new_pages_project_created": false
+  }
+}
