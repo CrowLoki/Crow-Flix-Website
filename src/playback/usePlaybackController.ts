@@ -238,6 +238,7 @@ export class PlaybackRun {
   private installPlayer(source: StreamSource, kind: PlaybackKind, token: number): void {
     const cleanupTasks: Array<() => void> = [];
     let cleaned = false;
+    let startupMilestone = "the provider connection";
     this.attemptCleanup = () => {
       if (cleaned) return;
       cleaned = true;
@@ -252,7 +253,7 @@ export class PlaybackRun {
         source,
         kind,
         "startup-timeout",
-        "The source connected, but playable media did not arrive within 35 seconds.",
+        `The source reached ${startupMilestone}, but playable media did not arrive within 35 seconds.`,
         { phase: "startup" },
       ),
       STARTUP_TIMEOUT_MS,
@@ -376,9 +377,28 @@ export class PlaybackRun {
         loader: createTauriHlsLoader(source),
       });
       hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        startupMilestone = "the browser media engine";
         if (this.isActive(token)) hls?.loadSource(source.url);
       });
-      hls.on(Hls.Events.MANIFEST_PARSED, attemptPlay);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        startupMilestone = "a parsed stream manifest";
+        attemptPlay();
+      });
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        startupMilestone = "downloaded media segments";
+      });
+      hls.on(Hls.Events.FRAG_DECRYPTED, () => {
+        startupMilestone = "decrypted media segments";
+      });
+      hls.on(Hls.Events.FRAG_PARSED, () => {
+        startupMilestone = "parsed audio/video segments";
+      });
+      hls.on(Hls.Events.BUFFER_CODECS, () => {
+        startupMilestone = "detected browser codecs";
+      });
+      hls.on(Hls.Events.BUFFER_APPENDED, () => {
+        startupMilestone = "buffered browser media";
+      });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!this.isActive(token) || !data.fatal) return;
         if (
