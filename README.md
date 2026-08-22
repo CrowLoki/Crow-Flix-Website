@@ -74,6 +74,12 @@ Live and ready routes rank first, and the default browser view keeps clearly
 limited or failed entries out of the way without deleting them from the full
 catalogue.
 
+Opening a multi-source channel starts a three-way bounded check across its
+current preferred source, its best HTTPS option, and an unverified alternative.
+As those checks finish, CrowFlix reorders only the routes it has not tried yet,
+so a newly proven route can jump ahead without restarting or replaying a failed
+attempt. Remaining checks stop as soon as one route proves ready.
+
 Because IPTV-org no longer publishes stream-status fields, the browser also
 uses the free, MIT-licensed
 [IPTV Nexus](https://github.com/dearbulut/iptv) static health index as an

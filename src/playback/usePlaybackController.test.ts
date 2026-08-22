@@ -167,6 +167,53 @@ describe("PlaybackRun retry", () => {
     run.dispose();
   });
 
+  it("moves a newly READY untried route directly behind a failed route", async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    const updates: PlaybackControllerState[] = [];
+    const video = {
+      currentTime: 0,
+      ended: false,
+      addEventListener: vi.fn(),
+      load: vi.fn(),
+      pause: vi.fn(),
+      play: vi.fn(async () => undefined),
+      removeAttribute: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLVideoElement;
+    const run = new PlaybackRun({
+      key: "late-ready",
+      name: "Late Ready",
+      sources: [
+        { id: "primary", url: "https://provider.test/primary.m3u8", preferenceScore: 100_000 },
+        { id: "ordinary", url: "https://provider.test/ordinary.m3u8", preferenceScore: 90_000 },
+        { id: "late-ready", url: "https://provider.test/ready.m3u8", preferenceScore: 1 },
+      ],
+    }, video, (state) => updates.push(state));
+
+    run.start();
+    const primary = hlsState.instances[0];
+    primary?.handlers.get("hlsMediaAttached")?.("hlsMediaAttached");
+    storage.setItem("crowflix:source-preflight:v1", JSON.stringify({
+      "late-ready": { status: "ready", checkedAt: Date.now(), transport: "hls" },
+    }));
+    primary?.handlers.get("hlsError")?.("hlsError", {
+      fatal: true,
+      type: "networkError",
+      details: "manifestLoadError",
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(updates[updates.length - 1]).toMatchObject({
+      status: "switching",
+      source: { id: "late-ready" },
+      sourceNumber: 2,
+    });
+    run.dispose();
+  });
+
   it("exports health safely and announces a source-health change", async () => {
     const storage = memoryStorage();
     const dispatchEvent = vi.fn();

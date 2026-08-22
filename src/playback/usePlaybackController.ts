@@ -147,7 +147,9 @@ export class PlaybackRun {
   }
 
   next(): void {
-    if (this.disposed || this.cursor + 1 >= this.orderedSources.length) return;
+    if (this.disposed) return;
+    this.reorderRemainingSources();
+    if (this.cursor + 1 >= this.orderedSources.length) return;
     this.startAttempt(this.cursor + 1, "switching");
   }
 
@@ -534,6 +536,7 @@ export class PlaybackRun {
     }
     this.attemptCleanup?.();
     this.attemptCleanup = null;
+    this.reorderRemainingSources();
 
     if (shouldFallback(reason) && this.cursor + 1 < this.orderedSources.length) {
       this.publish("switching", `${message} Trying the next playback route…`);
@@ -571,6 +574,27 @@ export class PlaybackRun {
       healthOrdered,
       readSourcePreflights(),
     );
+  }
+
+  private reorderRemainingSources(): void {
+    const attempted = this.orderedSources.slice(0, this.cursor + 1);
+    const attemptedIds = new Set(attempted.map((source) => sourceIdentifier(source)));
+    const preferred = readRecord<string>(PREFERRED_STORAGE_KEY)[this.channel.key];
+    const healthOrdered = orderPlaybackSources(
+      this.channel.sources,
+      this.health,
+      preferred,
+    );
+    const readinessOrdered = orderSourcesByPreflight(
+      healthOrdered,
+      readSourcePreflights(),
+    );
+    this.orderedSources = [
+      ...attempted,
+      ...readinessOrdered.filter(
+        (source) => !attemptedIds.has(sourceIdentifier(source)),
+      ),
+    ];
   }
 
   private resetVideo(): void {

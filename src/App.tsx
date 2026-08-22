@@ -57,6 +57,7 @@ import {
 } from "./playback/usePlaybackController";
 import { sourceIdentifier, type SourceHealth, type StreamSource } from "./playback/types";
 import {
+  browserPreflightRoutes,
   isFreshPreflight,
   preflightSource,
   readSourcePreflights,
@@ -717,8 +718,13 @@ export default function App() {
     return [...new Map(candidates.map((channel) => [channel.key, channel])).values()]
       .slice(0, 12);
   }, [catalog.regions, catalog.source, favouriteChannels, filteredChannels, guideCountry, isDesktop, playing, rankedCatalogChannels, view]);
-  const preflightRoutes = useMemo(() => preflightChannels.flatMap((channel) =>
-    channelSources(channel).slice(0, 2).flatMap(toWebPlayableSources)), [preflightChannels]);
+  const preflightTasks = useMemo(() => preflightChannels.flatMap((channel) =>
+    browserPreflightRoutes(
+      channelSources(channel),
+      playing?.key === channel.key ? 12 : 3,
+      healthNow,
+    ).map((source) => ({ channelKey: channel.key, source }))),
+  [healthNow, playing?.key, preflightChannels]);
   const preflightWindow = Math.floor(healthNow / SOURCE_PREFLIGHT_TTL_MS);
   const preflightTriggerKey = [
     catalog.updatedAt,
@@ -736,16 +742,28 @@ export default function App() {
     preflightWindow,
   ].join("\u0001");
   useEffect(() => {
-    if (isDesktop || !preflightRoutes.length) return undefined;
+    if (isDesktop || !preflightTasks.length) return undefined;
     const controller = new AbortController();
-    const routes = [...new Map(preflightRoutes.map((source) => [sourceIdentifier(source), source])).values()];
-    void runPreflightQueue(routes, 3, async (source) => {
+    const tasks = [...new Map(preflightTasks.map((task) => [
+      `${task.channelKey}\u0000${sourceIdentifier(task.source)}`,
+      task,
+    ])).values()];
+    const readyChannels = new Set<string>();
+    void runPreflightQueue(tasks, 3, async (task) => {
       if (!controller.signal.aborted) {
+        if (readyChannels.has(task.channelKey)) return;
+        const source = task.source;
         const current = readSourcePreflights()[sourceIdentifier(source)];
-        if (isFreshPreflight(current)) return;
+        if (isFreshPreflight(current)) {
+          if (current.status === "ready") readyChannels.add(task.channelKey);
+          return;
+        }
         try {
           const result = await preflightSource(source, undefined, controller.signal);
-          if (!controller.signal.aborted) recordSourcePreflight(source, result);
+          if (!controller.signal.aborted) {
+            recordSourcePreflight(source, result);
+            if (result.status === "ready") readyChannels.add(task.channelKey);
+          }
         } catch {
           // Navigation aborts are expected; route failures are returned as data.
         }

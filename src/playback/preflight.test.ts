@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  browserPreflightRoutes,
   firstDashResourceUrl,
   hlsManifestReferences,
   isFreshPreflight,
@@ -140,5 +141,36 @@ describe("source readiness cache", () => {
     });
     expect(maximumActive).toBe(3);
     expect(active).toBe(0);
+  });
+
+  it("round-robins the preferred, HTTPS, and unknown sources before their fallbacks", () => {
+    const now = 100_000;
+    const sources: StreamSource[] = [
+      {
+        id: "preferred-http",
+        url: "http://provider.test/preferred.m3u8",
+        catalogHealth: { status: "online", score: 100, checkedAt: now - 1 },
+      },
+      {
+        id: "healthy-https",
+        url: "https://provider.test/healthy.m3u8",
+        catalogHealth: { status: "online", score: 90, checkedAt: now - 1 },
+      },
+      {
+        id: "failed-https",
+        url: "https://provider.test/failed.m3u8",
+        catalogHealth: { status: "offline", score: 0, checkedAt: now - 1 },
+      },
+      { id: "unknown-https", url: "https://provider.test/unknown.m3u8" },
+    ];
+
+    const routes = browserPreflightRoutes(sources, 3, now);
+
+    expect(routes).toHaveLength(6);
+    expect(routes.slice(0, 3).map((route) => route.logicalUrl)).toEqual([
+      sources[0].url,
+      sources[1].url,
+      sources[3].url,
+    ]);
   });
 });

@@ -1,4 +1,5 @@
-import { routeDashRequestUrl } from "../relayClient";
+import { routeDashRequestUrl, toWebPlayableSources } from "../relayClient";
+import { isFreshCatalogHealth } from "../streamHealthIndex";
 import { classifySource } from "./logic";
 import {
   MediaRequestError,
@@ -545,6 +546,44 @@ export function orderSourcesByPreflight(
     };
     return rank(leftResult) - rank(rightResult) || left.index - right.index;
   }).map(({ source }) => source);
+}
+
+export function browserPreflightRoutes(
+  sources: StreamSource[],
+  maximumSources: number,
+  now = Date.now(),
+): StreamSource[] {
+  const selected: StreamSource[] = [];
+  const selectedIds = new Set<string>();
+  const add = (source: StreamSource | undefined) => {
+    if (!source) return;
+    const id = sourceIdentifier(source);
+    if (selectedIds.has(id)) return;
+    selectedIds.add(id);
+    selected.push(source);
+  };
+
+  add(sources[0]);
+  add(sources.find((source) => source.url.toLowerCase().startsWith("https://")));
+  add(sources.find((source) => !isFreshCatalogHealth(source.catalogHealth, now)));
+  for (const source of sources) add(source);
+
+  const groups = selected.slice(0, Math.max(0, Math.floor(maximumSources)))
+    .map(toWebPlayableSources);
+  const routes: StreamSource[] = [];
+  const routeIds = new Set<string>();
+  const rounds = Math.max(0, ...groups.map((group) => group.length));
+  for (let round = 0; round < rounds; round += 1) {
+    for (const group of groups) {
+      const route = group[round];
+      if (!route) continue;
+      const id = sourceIdentifier(route);
+      if (routeIds.has(id)) continue;
+      routeIds.add(id);
+      routes.push(route);
+    }
+  }
+  return routes;
 }
 
 export async function runPreflightQueue<T>(
