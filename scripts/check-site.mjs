@@ -83,7 +83,7 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "<video", "Next route", "Best available", "All catalogued"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Best available", "All catalogued"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 assert(!app.includes("Download Crow-Flix for Windows"), "The browser app was replaced by a desktop download page");

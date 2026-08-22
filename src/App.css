@@ -163,6 +163,7 @@ main { min-height: calc(100vh - 122px); }
 .card-image .fallback-logo { width: 88px; height: 88px; object-fit: contain; opacity: .92; filter: drop-shadow(0 0 14px rgba(51, 214, 255, .26)) drop-shadow(0 0 22px rgba(168, 77, 255, .22)); }
 .live-badge, .quality-badge { position: absolute; top: 10px; padding: 4px 7px; border-radius: 5px; font: 700 9px var(--font-mono); letter-spacing: .08em; }
 .live-badge { left: 10px; color: white; background: linear-gradient(135deg, var(--violet), #5b32d5); box-shadow: 0 0 12px rgba(168, 77, 255, .42); animation: livePulse 2.6s ease-in-out infinite; }
+.live-badge.availability-ready { color: #b9ffd5; border: 1px solid rgba(69, 231, 139, .42); background: rgba(5, 45, 29, .92); box-shadow: 0 0 12px rgba(69, 231, 139, .18); animation: none; }
 .live-badge.availability-unverified { color: var(--cyan); border: 1px solid rgba(51, 214, 255, .34); background: rgba(3, 19, 31, .92); box-shadow: none; animation: none; }
 .live-badge.availability-part-time { color: #ffe4a3; border: 1px solid rgba(255, 190, 72, .38); background: rgba(65, 39, 4, .9); box-shadow: none; animation: none; }
 .live-badge.availability-region-limited { color: #ffd1d8; border: 1px solid rgba(255, 91, 117, .4); background: rgba(61, 12, 26, .92); box-shadow: none; animation: none; }

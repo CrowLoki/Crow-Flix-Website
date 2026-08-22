@@ -55,7 +55,17 @@ import {
   usePlaybackController,
   type PlaybackController,
 } from "./playback/usePlaybackController";
-import type { SourceHealth, StreamSource } from "./playback/types";
+import { sourceIdentifier, type SourceHealth, type StreamSource } from "./playback/types";
+import {
+  isFreshPreflight,
+  preflightSource,
+  readSourcePreflights,
+  recordSourcePreflight,
+  runPreflightQueue,
+  SOURCE_PREFLIGHT_CHANGED_EVENT,
+  SOURCE_PREFLIGHT_TTL_MS,
+  type SourcePreflight,
+} from "./playback/preflight";
 import {
   availabilityLabel,
   availabilityRank,
@@ -313,10 +323,28 @@ export default function App() {
   const [playbackHealth, setPlaybackHealth] = useState<Record<string, SourceHealth>>(
     () => readPlaybackHealth(),
   );
+  const [sourcePreflights, setSourcePreflights] = useState<Record<string, SourcePreflight>>(
+    () => readSourcePreflights(),
+  );
   useEffect(() => {
     const refreshHealth = () => setPlaybackHealth(readPlaybackHealth());
     window.addEventListener(SOURCE_HEALTH_CHANGED_EVENT, refreshHealth);
     return () => window.removeEventListener(SOURCE_HEALTH_CHANGED_EVENT, refreshHealth);
+  }, []);
+  useEffect(() => {
+    let refreshTimer: number | undefined;
+    const refreshPreflights = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(
+        () => setSourcePreflights(readSourcePreflights()),
+        150,
+      );
+    };
+    window.addEventListener(SOURCE_PREFLIGHT_CHANGED_EVENT, refreshPreflights);
+    return () => {
+      window.removeEventListener(SOURCE_PREFLIGHT_CHANGED_EVENT, refreshPreflights);
+      window.clearTimeout(refreshTimer);
+    };
   }, []);
   const playbackTarget = useMemo(
     () => playing
@@ -606,19 +634,29 @@ export default function App() {
 
   const healthNow = clock.getTime();
   const rankedCatalogChannels = useMemo(
-    () => rankChannelsByAvailability(catalog.channels, playbackHealth, healthNow),
-    [catalog.channels, healthNow, playbackHealth],
+    () => rankChannelsByAvailability(
+      catalog.channels,
+      playbackHealth,
+      healthNow,
+      sourcePreflights,
+    ),
+    [catalog.channels, healthNow, playbackHealth, sourcePreflights],
   );
   const availabilityByChannel = useMemo(
     () => Object.fromEntries(catalog.channels.map((channel) => [
       channel.key,
-      channelAvailability(channel, playbackHealth, healthNow),
+      channelAvailability(channel, playbackHealth, healthNow, sourcePreflights),
     ])),
-    [catalog.channels, healthNow, playbackHealth],
+    [catalog.channels, healthNow, playbackHealth, sourcePreflights],
   );
   const availabilitySummary = useMemo(
-    () => summarizeAvailability(catalog.channels, playbackHealth, healthNow),
-    [catalog.channels, healthNow, playbackHealth],
+    () => summarizeAvailability(
+      catalog.channels,
+      playbackHealth,
+      healthNow,
+      sourcePreflights,
+    ),
+    [catalog.channels, healthNow, playbackHealth, sourcePreflights],
   );
 
   const filteredChannels = useMemo(() => {
@@ -637,8 +675,13 @@ export default function App() {
       if (needle && !`${channel.name} ${channel.network || ""} ${channel.categories.join(" ")} ${channel.languages.join(" ")} ${countryName(channel.country)}`.toLowerCase().includes(needle)) return false;
       return true;
     });
-    return rankChannelsByAvailability(matching, playbackHealth, healthNow);
-  }, [catalog.channels, catalog.regions, category, country, healthNow, language, playbackHealth, query, region]);
+    return rankChannelsByAvailability(
+      matching,
+      playbackHealth,
+      healthNow,
+      sourcePreflights,
+    );
+  }, [catalog.channels, catalog.regions, category, country, healthNow, language, playbackHealth, query, region, sourcePreflights]);
 
   const favouriteChannels = useMemo(() => favourites.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, favourites]);
   const recentChannels = useMemo(() => recent.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, recent]);
@@ -659,6 +702,57 @@ export default function App() {
   const hero = localChannels.find((channel) => currentProgramme(programmes, channel.id, clock)) || localChannels[0] || rankedCatalogChannels[0];
   const heroNow = hero ? currentProgramme(programmes, hero.id, clock) : undefined;
   const heroNext = hero ? nextProgramme(programmes, hero.id, clock) : undefined;
+
+  const preflightChannels = useMemo(() => {
+    if (isDesktop || catalog.source.includes("preview")) return [];
+    let candidates: Channel[];
+    if (playing) candidates = [playing];
+    else if (view === "live") candidates = filteredChannels;
+    else if (view === "favourites") candidates = favouriteChannels;
+    else if (view === "guide") {
+      candidates = rankedCatalogChannels.filter((channel) =>
+        channelMatchesCountry(channel, guideCountry, catalog.regions));
+    } else if (view === "home") candidates = rankedCatalogChannels;
+    else candidates = [];
+    return [...new Map(candidates.map((channel) => [channel.key, channel])).values()]
+      .slice(0, 12);
+  }, [catalog.regions, catalog.source, favouriteChannels, filteredChannels, guideCountry, isDesktop, playing, rankedCatalogChannels, view]);
+  const preflightRoutes = useMemo(() => preflightChannels.flatMap((channel) =>
+    channelSources(channel).slice(0, 2).flatMap(toWebPlayableSources)), [preflightChannels]);
+  const preflightWindow = Math.floor(healthNow / SOURCE_PREFLIGHT_TTL_MS);
+  const preflightTriggerKey = [
+    catalog.updatedAt,
+    catalog.source,
+    catalog.channels.length,
+    view,
+    query,
+    category,
+    country,
+    language,
+    region,
+    guideCountry,
+    view === "favourites" ? favourites.join("\u0000") : "",
+    playing?.key || "",
+    preflightWindow,
+  ].join("\u0001");
+  useEffect(() => {
+    if (isDesktop || !preflightRoutes.length) return undefined;
+    const controller = new AbortController();
+    const routes = [...new Map(preflightRoutes.map((source) => [sourceIdentifier(source), source])).values()];
+    void runPreflightQueue(routes, 3, async (source) => {
+      if (!controller.signal.aborted) {
+        const current = readSourcePreflights()[sourceIdentifier(source)];
+        if (isFreshPreflight(current)) return;
+        try {
+          const result = await preflightSource(source, undefined, controller.signal);
+          if (!controller.signal.aborted) recordSourcePreflight(source, result);
+        } catch {
+          // Navigation aborts are expected; route failures are returned as data.
+        }
+      }
+    }, controller.signal);
+    return () => controller.abort();
+  }, [isDesktop, preflightTriggerKey]); // A stable user/catalog key prevents cache writes from restarting the queue.
 
   const zapKeys = useMemo(
     () => (filteredChannels.length ? filteredChannels : catalog.channels).map((channel) => channel.key),
@@ -746,7 +840,7 @@ export default function App() {
         ? <footer className="status-bar"><span><GlobeHemisphereWest weight="fill" /> {webDestinations.length.toLocaleString()} website destinations</span><span>Saved on this device · JSON backup available</span></footer>
         : view === "about"
           ? <footer className="status-bar"><span><Info weight="fill" /> CrowFlix 0.5.1</span><span>Copyright © 2026 Crow · AGPL-3.0-only</span></footer>
-        : <footer className="status-bar"><span><Broadcast weight="fill" /> {catalog.channels.length.toLocaleString()} catalogued · {availabilitySummary.verified.toLocaleString()} verified here · {sourceCount.toLocaleString()} sources</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
+        : <footer className="status-bar"><span><Broadcast weight="fill" /> {catalog.channels.length.toLocaleString()} catalogued · {availabilitySummary.verified.toLocaleString()} live · {availabilitySummary.ready.toLocaleString()} ready · {sourceCount.toLocaleString()} sources</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
       {playing && <Player channel={playing} now={currentProgramme(programmes, playing.id, clock)} next={nextProgramme(programmes, playing.id, clock)} playback={playback} videoRef={videoRef} zapNotice={zapNotice} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={() => setPlaying(null)} />}
       {sourceOpen && <SourceDialog sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} epgUrl={epgUrl} setEpgUrl={setEpgUrl} loading={loading || guideLoading} onClose={() => setSourceOpen(false)} onPlaylistUrl={() => void importPlaylistUrl()} onPlaylistFile={(file) => void importPlaylistFile(file)} onEpgUrl={() => void importEpgUrl()} onEpgFile={(file) => void importEpgFile(file)} />}
       {toast && <div className="toast"><CheckCircle weight="fill" />{toast}</div>}
