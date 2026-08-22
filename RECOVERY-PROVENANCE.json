@@ -15,6 +15,13 @@
     "relay_origin": "https://crowflix-relay.djdarren2056.workers.dev",
     "relay_health": "https://crowflix-relay.djdarren2056.workers.dev/health"
   },
+  "recovered_to": {
+    "cloudflare_pages_project": "crow-flix",
+    "cloudflare_pages_project_id": "86b80a73-f46a-47b1-bb16-81eeab142b64",
+    "build_command": "npm run check",
+    "build_output": "dist",
+    "canonical_origin": "https://crowflix.tv/"
+  },
   "recovery_boundaries": {
     "desktop_repository_modified": false,
     "desktop_runtime_modified": false,
