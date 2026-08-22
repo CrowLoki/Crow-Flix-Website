@@ -72,6 +72,16 @@ export type ProbeResult = {
   mimeType: string;
 };
 
+export class MediaRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`Media request returned HTTP ${status}`);
+    this.name = "MediaRequestError";
+    this.status = status;
+  }
+}
+
 export async function probeSource(
   source: StreamSource,
   fetcher: MediaFetcher = mediaFetch,
@@ -89,7 +99,7 @@ export async function probeSource(
       signal: controller.signal,
     });
     if (!response.ok && response.status !== 206) {
-      throw new Error(`Probe returned HTTP ${response.status}`);
+      throw new MediaRequestError(response.status);
     }
 
     const bytes = await readPrefix(response, 8_192, controller.signal);

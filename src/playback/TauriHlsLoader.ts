@@ -116,9 +116,24 @@ export function createTauriHlsLoader(
       this.stats.loading = { start: attemptStart, first: 0, end: 0 };
 
       const headers = new Headers(context.headers);
-      if (context.rangeStart !== undefined) {
-        const last = context.rangeEnd !== undefined ? context.rangeEnd - 1 : "";
-        headers.set("Range", `bytes=${context.rangeStart}-${last}`);
+      const rangeStart = context.rangeStart;
+      const rangeEnd = context.rangeEnd;
+      if (
+        rangeStart !== undefined
+        && rangeEnd !== undefined
+        && Number.isFinite(rangeStart)
+        && Number.isFinite(rangeEnd)
+        && rangeStart >= 0
+        && rangeEnd > rangeStart
+      ) {
+        headers.set("Range", `bytes=${rangeStart}-${rangeEnd - 1}`);
+      } else if (
+        rangeStart !== undefined
+        && Number.isFinite(rangeStart)
+        && rangeStart > 0
+        && rangeEnd === undefined
+      ) {
+        headers.set("Range", `bytes=${rangeStart}-`);
       }
 
       const maxLoadTime = boundedDuration(
@@ -203,9 +218,10 @@ export function createTauriHlsLoader(
             }
           }
         }
-        if (typeof data === "string" || data instanceof ArrayBuffer) {
-          this.callbacks?.onProgress?.(this.stats, context, data, response);
-        }
+        // This loader returns one complete, bounded response through
+        // onSuccess. Sending the same bytes through onProgress first makes
+        // hls.js treat encrypted fragments as progressive input and can leave
+        // their completed response waiting forever for a playable buffer.
         this.finishRequest();
         this.callbacks?.onSuccess(
           { url: response.url || context.url, data, code: response.status },

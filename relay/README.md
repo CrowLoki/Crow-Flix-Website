@@ -5,9 +5,10 @@ Cloudflare Pages) the two things browsers cannot do themselves:
 
 1. **Server-side EPG pipeline** (`/epg`) — fetch and parse XMLTV programme
    guides without running into CORS.
-2. **Header-locked stream relay** (`/stream`) — attach provider-required
-   `User-Agent` / `Referer` headers server-side, with HLS playlist rewriting
-   so every segment, key, and variant routes back through the relay.
+2. **Browser-compatible stream relay** (`/stream`) — bridge HTTP/CORS sources,
+   attach provider-required `User-Agent` / `Referer` headers, preserve byte
+   ranges, and rewrite HLS playlists so every segment, key, and variant routes
+   back through the relay.
 3. **Bounded generic text fetch** (`/fetch`) — pull user-supplied M3U
    playlists and XMLTV guides for the web import feature.
 
@@ -124,19 +125,28 @@ Bounded generic text fetch for user-supplied M3U playlists / XMLTV guides.
 
 ### `GET /stream?url=<encoded>&referer=<encoded>&ua=<encoded>`
 
-Header-locked stream relay. Same URL validation as `/fetch`. The supplied
+Browser-compatible stream relay. Same URL validation as `/fetch`. The supplied
 `ua` / `referer` values (both optional, sanitised) become upstream
-`User-Agent` / `Referer` headers.
+`User-Agent` / `Referer` headers. A single safe browser `Range` is forwarded;
+multipart and malformed ranges are rejected.
 
 - If the response is an HLS playlist — content type contains `mpegurl`, URL
-  path ends `.m3u8`/`.m3u`, **or** the body starts with `#EXTM3U` (sniffed via
-  `tee()` so mislabeled playlists still work) — the playlist is read within a
+  path ends `.m3u8`/`.m3u`, **or** the body starts with `#EXTM3U` (sniffed with
+  a replayed single-reader prefix so mislabeled playlists still work) — the playlist is read within a
   **4 MiB** cap and every URI is rewritten through `/stream` with the same
   `ua`/`referer`: both `#EXT-X-...:URI="..."` attributes (KEY, MAP, MEDIA,
   ...) and bare URI lines, with relative URIs resolved against the playlist
-  URL. Non-http(s) URIs (e.g. `data:`) are left untouched.
+  URL after all validated redirects. Non-http(s) URIs (e.g. `data:`) are left
+  untouched.
 - Anything else (media segments, live streams) streams through **unbounded**
-  and untouched. No upstream timeout — live IPTV streams are long-lived.
+  and untouched. Upstream `206`, `Content-Range`, `Accept-Ranges`, and
+  `Content-Length` are preserved. Connection and first byte are bounded to
+  eight seconds; after media begins there is no overall timeout because live
+  IPTV streams are long-lived.
+- For a relayed DASH source, the browser keeps provider-facing logical URLs
+  for MPD resolution while routing MPD, initialization, ordinary media, and
+  `availabilityTimeComplete=false` FetchLoader requests individually through
+  `/stream`.
 - Full URLs are never logged (they may carry query credentials); error
   messages quote upstream status codes only.
 

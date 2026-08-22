@@ -6,6 +6,7 @@ import type {
   RetryConfig,
 } from "hls.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { routeDashRequestUrl, toWebPlayableSources } from "../relayClient";
 import { MAX_PLAYBACK_METADATA_BYTES } from "./boundedResponse";
 import { createTauriHlsLoader } from "./TauriHlsLoader";
 import type { MediaFetcher } from "./nativeFetch";
@@ -78,6 +79,104 @@ describe("Tauri HLS loader", () => {
     });
 
     expect(finalUrl).toBe("https://cdn.test/path/final.m3u8?cdn-token=hidden");
+    loader.destroy();
+  });
+
+  it("fetches an absolute rewritten relay child without wrapping it again", async () => {
+    const [, relaySource] = toWebPlayableSources({
+      id: "relayed-hls",
+      url: "https://provider.test/live/master.m3u8",
+      transport: "hls",
+    });
+    const relayChild = routeDashRequestUrl(
+      "https://provider.test/live/segment-1.ts",
+      relaySource!,
+    );
+    const fetcher: MediaFetcher = vi.fn(async () => new Response(
+      new Uint8Array([1, 2, 3]),
+      { status: 200 },
+    ));
+    const Loader = createTauriHlsLoader(relaySource!, fetcher);
+    const loader = new Loader({} as HlsConfig);
+    const onProgress = vi.fn();
+
+    await new Promise<void>((resolve, reject) => {
+      loader.load({
+        ...context,
+        url: relayChild,
+        responseType: "arraybuffer",
+        type: "fragment" as LoaderContext["type"],
+      }, config, {
+        onSuccess: () => resolve(),
+        onProgress,
+        onError: (error) => reject(new Error(error.text)),
+        onTimeout: () => reject(new Error("timed out")),
+      });
+    });
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(onProgress).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledWith(
+      relayChild,
+      relaySource,
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(new URL(relayChild).searchParams.get("url"))
+      .toBe("https://provider.test/live/segment-1.ts");
+    loader.destroy();
+  });
+
+  it("does not turn HLS.js default 0-0 range metadata into bytes=0--1", async () => {
+    let receivedRange: string | null = "not-called";
+    const fetcher: MediaFetcher = vi.fn(async (_url, _source, init) => {
+      receivedRange = new Headers(init?.headers).get("Range");
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+    });
+    const Loader = createTauriHlsLoader(source, fetcher);
+    const loader = new Loader({} as HlsConfig);
+
+    await new Promise<void>((resolve, reject) => {
+      loader.load({
+        ...context,
+        responseType: "arraybuffer",
+        type: "fragment" as LoaderContext["type"],
+        rangeStart: 0,
+        rangeEnd: 0,
+      }, config, {
+        onSuccess: () => resolve(),
+        onError: (error) => reject(new Error(error.text)),
+        onTimeout: () => reject(new Error("timed out")),
+      });
+    });
+
+    expect(receivedRange).toBeNull();
+    loader.destroy();
+  });
+
+  it("converts a real half-open HLS byte range to an inclusive HTTP range", async () => {
+    let receivedRange: string | null = null;
+    const fetcher: MediaFetcher = vi.fn(async (_url, _source, init) => {
+      receivedRange = new Headers(init?.headers).get("Range");
+      return new Response(new Uint8Array([1, 2, 3]), { status: 206 });
+    });
+    const Loader = createTauriHlsLoader(source, fetcher);
+    const loader = new Loader({} as HlsConfig);
+
+    await new Promise<void>((resolve, reject) => {
+      loader.load({
+        ...context,
+        responseType: "arraybuffer",
+        type: "fragment" as LoaderContext["type"],
+        rangeStart: 100,
+        rangeEnd: 200,
+      }, config, {
+        onSuccess: () => resolve(),
+        onError: (error) => reject(new Error(error.text)),
+        onTimeout: () => reject(new Error("timed out")),
+      });
+    });
+
+    expect(receivedRange).toBe("bytes=100-199");
     loader.destroy();
   });
 

@@ -46,8 +46,9 @@ Depending on the feature used, the website can connect to:
 - channel-logo and artwork hosts;
 - media hosts and content-delivery networks listed by the catalogue;
 - external Web Library destinations opened by the visitor;
-- the Crow-Flix relay for programme guides and sources that require provider
-  headers; and
+- the Crow-Flix relay for programme guides and media that an HTTPS browser
+  cannot load directly, including HTTP, CORS-blocked, redirected, byte-range,
+  DASH, or provider-header sources; and
 - Cloudflare Turnstile when a visitor requests live programme-guide data.
 
 External providers apply their own availability, geographic, account, storage,
@@ -55,8 +56,9 @@ and privacy rules. Crow-Flix does not bypass those restrictions.
 
 ## Crow-Flix relay
 
-The relay receives requests needed to provide programme guides and route
-header-dependent media. Those requests can include:
+The relay receives requests needed to provide programme guides, load the fixed
+optional FAST fallback playlists, and route browser-incompatible media. Those
+requests can include:
 
 - the visitor IP address and request time;
 - the requested relay route;

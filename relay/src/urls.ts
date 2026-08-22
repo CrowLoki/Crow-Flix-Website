@@ -22,6 +22,12 @@ export interface FetchLike {
   (input: URL | string, init?: RequestInit): Promise<Response>;
 }
 
+export interface ValidatedFetchResult {
+  response: Response;
+  /** Final public URL after every manually validated redirect. */
+  finalUrl: URL;
+}
+
 /**
  * Validate a user-supplied URL for relaying: http/https only, no embedded
  * credentials, and no loopback / private / link-local hostnames.
@@ -168,11 +174,11 @@ function isPrivateIpv6(host: string): boolean {
  * fetch() wrapper that follows redirects manually and re-validates every
  * redirect target, so a public URL cannot bounce the relay at a private one.
  */
-export async function fetchValidated(
+export async function fetchValidatedWithUrl(
   start: URL,
   init: RequestInit = {},
   fetcher: FetchLike = fetch,
-): Promise<Response> {
+): Promise<ValidatedFetchResult> {
   let current = start;
   for (let hop = 0; ; hop++) {
     const response = await fetcher(current, { ...init, redirect: "manual" });
@@ -195,9 +201,21 @@ export async function fetchValidated(
           );
         }
         current = validateExternalUrl(resolved.href);
+        // We never consume redirect bodies. Release them without awaiting the
+        // cancellation before following the already-validated Location.
+        void response.body?.cancel().catch(() => undefined);
         continue;
       }
     }
-    return response;
+    return { response, finalUrl: current };
   }
+}
+
+/** Backwards-compatible response-only wrapper for callers that need no URL. */
+export async function fetchValidated(
+  start: URL,
+  init: RequestInit = {},
+  fetcher: FetchLike = fetch,
+): Promise<Response> {
+  return (await fetchValidatedWithUrl(start, init, fetcher)).response;
 }

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
@@ -42,10 +50,20 @@ import {
 } from "./importLimits";
 import { migrateStoredChannelKeys } from "./playback/logic";
 import {
+  readPlaybackHealth,
+  SOURCE_HEALTH_CHANGED_EVENT,
   usePlaybackController,
   type PlaybackController,
 } from "./playback/usePlaybackController";
-import type { StreamSource } from "./playback/types";
+import type { SourceHealth, StreamSource } from "./playback/types";
+import {
+  availabilityLabel,
+  availabilityRank,
+  channelAvailability,
+  rankChannelsByAvailability,
+  summarizeAvailability,
+  type ChannelAvailability,
+} from "./playback/availability";
 import WebDestinationsView from "./WebDestinationsView";
 import {
   loadWebDestinations,
@@ -60,7 +78,7 @@ import { loadWebCatalog } from "./webCatalog";
 import {
   loadRelayGuide,
   RelayRequestError,
-  toWebPlayableSource,
+  toWebPlayableSources,
 } from "./relayClient";
 import TurnstileGuideGate from "./TurnstileGuideGate";
 import "./App.css";
@@ -71,6 +89,8 @@ const PAGE_SIZE = 48;
 
 type View = "home" | "live" | "guide" | "web" | "favourites" | "about";
 type BrowseMode = "categories" | "countries" | "languages" | "regions";
+
+const PlaybackAvailabilityContext = createContext<Record<string, ChannelAvailability>>({});
 
 type Channel = {
   key: string;
@@ -290,13 +310,21 @@ export default function App() {
   const zapNumberTimer = useRef<number | undefined>(undefined);
   const zapNoticeTimer = useRef<number | undefined>(undefined);
   const [zapNotice, setZapNotice] = useState("");
+  const [playbackHealth, setPlaybackHealth] = useState<Record<string, SourceHealth>>(
+    () => readPlaybackHealth(),
+  );
+  useEffect(() => {
+    const refreshHealth = () => setPlaybackHealth(readPlaybackHealth());
+    window.addEventListener(SOURCE_HEALTH_CHANGED_EVENT, refreshHealth);
+    return () => window.removeEventListener(SOURCE_HEALTH_CHANGED_EVENT, refreshHealth);
+  }, []);
   const playbackTarget = useMemo(
     () => playing
       ? {
         ...playing,
-        sources: channelSources(playing).map(
-          (source) => isDesktop ? source : toWebPlayableSource(source),
-        ),
+        sources: isDesktop
+          ? channelSources(playing)
+          : channelSources(playing).flatMap(toWebPlayableSources),
       }
       : null,
     [playing, isDesktop],
@@ -576,9 +604,26 @@ export default function App() {
     } catch (error) { showToast(error instanceof Error ? error.message : String(error)); }
   };
 
+  const healthNow = clock.getTime();
+  const rankedCatalogChannels = useMemo(
+    () => rankChannelsByAvailability(catalog.channels, playbackHealth, healthNow),
+    [catalog.channels, healthNow, playbackHealth],
+  );
+  const availabilityByChannel = useMemo(
+    () => Object.fromEntries(catalog.channels.map((channel) => [
+      channel.key,
+      channelAvailability(channel, playbackHealth, healthNow),
+    ])),
+    [catalog.channels, healthNow, playbackHealth],
+  );
+  const availabilitySummary = useMemo(
+    () => summarizeAvailability(catalog.channels, playbackHealth, healthNow),
+    [catalog.channels, healthNow, playbackHealth],
+  );
+
   const filteredChannels = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return catalog.channels.filter((channel) => {
+    const matching = catalog.channels.filter((channel) => {
       if (
         country !== "all"
         && !channelMatchesCountry(channel, country, catalog.regions)
@@ -592,25 +637,26 @@ export default function App() {
       if (needle && !`${channel.name} ${channel.network || ""} ${channel.categories.join(" ")} ${channel.languages.join(" ")} ${countryName(channel.country)}`.toLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [catalog.channels, catalog.regions, category, country, language, query, region]);
+    return rankChannelsByAvailability(matching, playbackHealth, healthNow);
+  }, [catalog.channels, catalog.regions, category, country, healthNow, language, playbackHealth, query, region]);
 
   const favouriteChannels = useMemo(() => favourites.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, favourites]);
   const recentChannels = useMemo(() => recent.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, recent]);
   const localChannels = useMemo(
-    () => catalog.channels.filter(
+    () => rankedCatalogChannels.filter(
       (channel) => channelMatchesCountry(
         channel,
         preferredCountry(),
         catalog.regions,
       ),
     ),
-    [catalog.channels, catalog.regions],
+    [rankedCatalogChannels, catalog.regions],
   );
   const sourceCount = useMemo(
     () => catalog.channels.reduce((total, channel) => total + channelSources(channel).length, 0),
     [catalog.channels],
   );
-  const hero = localChannels.find((channel) => currentProgramme(programmes, channel.id, clock)) || localChannels[0] || catalog.channels[0];
+  const hero = localChannels.find((channel) => currentProgramme(programmes, channel.id, clock)) || localChannels[0] || rankedCatalogChannels[0];
   const heroNow = hero ? currentProgramme(programmes, hero.id, clock) : undefined;
   const heroNext = hero ? nextProgramme(programmes, hero.id, clock) : undefined;
 
@@ -683,12 +729,13 @@ export default function App() {
   const changeView = (next: View) => { setView(next); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
   return (
+    <PlaybackAvailabilityContext.Provider value={availabilityByChannel}>
     <div className="app-shell">
       <Header view={view} onView={changeView} query={query} onQuery={(value) => { setQuery(value); if (value && view !== "web") setView("live"); }} onSource={() => setSourceOpen(true)} canAddSource={isDesktop} />
       {loading && <LoadingOverlay message={loadingMessage} />}
       {catalogError && <CatalogErrorBanner message={catalogError} hasCatalog={catalog.channels.length > 0} loading={loading} onRetry={() => void loadCatalog(catalog.channels.length > 0)} />}
       <main>
-        {view === "home" && <HomeView channels={catalog.channels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onInfo={() => setView("guide")} />}
+        {view === "home" && <HomeView channels={rankedCatalogChannels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onInfo={() => setView("guide")} />}
         {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} />}
         {view === "guide" && <GuideView catalog={catalog} country={guideCountry} setCountry={setGuideCountry} programmes={programmes} clock={clock} status={guideStatus} loading={guideLoading} requiresVerification={!isDesktop && guideNeedsVerification} verificationError={guideVerificationError} onVerified={(token) => void loadGuide(guideCountry, true, token)} onVerificationError={(message) => { setGuideVerificationError(message || null); if (message) setGuideStatus(message); }} onRefresh={() => void loadGuide(guideCountry, true)} onPlay={play} />}
         {view === "web" && <WebDestinationsView items={webDestinations} query={query} onOpen={(item) => void openWebsite(item.url, item.title)} onSave={saveWebDestination} onDelete={deleteWebDestination} onImport={importWebDestinations} onMessage={showToast} />}
@@ -699,11 +746,12 @@ export default function App() {
         ? <footer className="status-bar"><span><GlobeHemisphereWest weight="fill" /> {webDestinations.length.toLocaleString()} website destinations</span><span>Saved on this device · JSON backup available</span></footer>
         : view === "about"
           ? <footer className="status-bar"><span><Info weight="fill" /> CrowFlix 0.5.1</span><span>Copyright © 2026 Crow · AGPL-3.0-only</span></footer>
-        : <footer className="status-bar"><span><Broadcast weight="fill" /> {catalog.channels.length.toLocaleString()} channels · {sourceCount.toLocaleString()} sources</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
+        : <footer className="status-bar"><span><Broadcast weight="fill" /> {catalog.channels.length.toLocaleString()} catalogued · {availabilitySummary.verified.toLocaleString()} verified here · {sourceCount.toLocaleString()} sources</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
       {playing && <Player channel={playing} now={currentProgramme(programmes, playing.id, clock)} next={nextProgramme(programmes, playing.id, clock)} playback={playback} videoRef={videoRef} zapNotice={zapNotice} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={() => setPlaying(null)} />}
       {sourceOpen && <SourceDialog sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} epgUrl={epgUrl} setEpgUrl={setEpgUrl} loading={loading || guideLoading} onClose={() => setSourceOpen(false)} onPlaylistUrl={() => void importPlaylistUrl()} onPlaylistFile={(file) => void importPlaylistFile(file)} onEpgUrl={() => void importEpgUrl()} onEpgFile={(file) => void importEpgFile(file)} />}
       {toast && <div className="toast"><CheckCircle weight="fill" />{toast}</div>}
     </div>
+    </PlaybackAvailabilityContext.Provider>
   );
 }
 
@@ -728,6 +776,7 @@ function CatalogErrorBanner({ message, hasCatalog, loading, onRetry }: { message
 }
 
 function HomeView({ channels, programmes, clock, hero, heroNow, heroNext, recent, favourites, onPlay, onFavourite, onInfo }: { channels: Channel[]; programmes: Programme[]; clock: Date; hero?: Channel; heroNow?: Programme; heroNext?: Programme; recent: Channel[]; favourites: string[]; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onInfo: () => void }) {
+  const availabilityByChannel = useContext(PlaybackAvailabilityContext);
   const rail = (category: string) => channels.filter((channel) => channel.categories.includes(category)).slice(0, 24);
   if (!hero) {
     return <div className="home-view">
@@ -742,12 +791,13 @@ function HomeView({ channels, programmes, clock, hero, heroNow, heroNext, recent
       </section>
     </div>;
   }
+  const heroAvailability = availabilityByChannel[hero.key] || "unverified";
   return <div className="home-view">
     <section className="hero">
       <img className="hero-art" src={MASCOT_IMAGE} alt="CrowFlix cybernetic crow mascot" />
       <div className="hero-vignette" />
       <div className="hero-copy">
-        <span className="overline"><Broadcast weight="fill" /> Live now</span>
+        <span className="overline"><Broadcast weight="fill" /> {heroAvailability === "verified" ? "Verified live" : availabilityLabel(heroAvailability)}</span>
         <h1>{heroNow?.title || hero.name}</h1>
         <div className="hero-meta"><strong>{hero.name}</strong><span>{channelQuality(hero)}</span><span>{countryName(hero.country)}</span><span>{titleCase(hero.categories[0])}</span></div>
         <p>{heroNow?.description || `Watch ${hero.name} live from the worldwide CrowFlix channel catalogue.`}</p>
@@ -773,23 +823,33 @@ function ChannelRail({ title, channels, programmes, clock, favourites, onPlay, o
 }
 
 function ChannelCard({ channel, programme, favourite, onPlay, onFavourite }: { channel: Channel; programme?: Programme; favourite: boolean; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void }) {
-  return <article className="channel-card"><button className="card-main" onClick={() => onPlay(channel)}><div className="card-image">{channel.logo ? <img src={channel.logo} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; event.currentTarget.className = "fallback-logo"; }} /> : <img className="fallback-logo" src={BRAND_ICON} alt="" />}<span className="live-badge">LIVE</span><span className="quality-badge">{channelQuality(channel)}</span><span className="play-overlay"><Play weight="fill" /></span></div><div className="card-copy"><strong>{programme?.title || channel.name}</strong><span>{channel.name}</span><small>{countryName(channel.country)} · {titleCase(channel.categories[0])}</small></div></button><button className="heart-button" onClick={() => onFavourite(channel)} aria-label={`Toggle ${channel.name} favourite`}><Heart weight={favourite ? "fill" : "regular"} /></button></article>;
+  const availability = useContext(PlaybackAvailabilityContext)[channel.key] || "unverified";
+  return <article className="channel-card"><button className="card-main" onClick={() => onPlay(channel)}><div className="card-image">{channel.logo ? <img src={channel.logo} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; event.currentTarget.className = "fallback-logo"; }} /> : <img className="fallback-logo" src={BRAND_ICON} alt="" />}<span className={`live-badge availability-${availability}`}>{availabilityLabel(availability)}</span><span className="quality-badge">{channelQuality(channel)}</span><span className="play-overlay"><Play weight="fill" /></span></div><div className="card-copy"><strong>{programme?.title || channel.name}</strong><span>{channel.name}</span><small>{countryName(channel.country)} · {titleCase(channel.categories[0])}</small></div></button><button className="heart-button" onClick={() => onFavourite(channel)} aria-label={`Toggle ${channel.name} favourite`}><Heart weight={favourite ? "fill" : "regular"} /></button></article>;
 }
 
 function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, favourites, programmes, clock, onPlay, onFavourite }: { catalog: Catalog; channels: Channel[]; mode: BrowseMode; setMode: (mode: BrowseMode) => void; category: string; setCategory: (value: string) => void; country: string; setCountry: (value: string) => void; language: string; setLanguage: (value: string) => void; region: string; setRegion: (value: string) => void; favourites: string[]; programmes: Programme[]; clock: Date; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void }) {
+  const availabilityByChannel = useContext(PlaybackAvailabilityContext);
+  const [showAllCatalogued, setShowAllCatalogued] = useState(false);
   const [page, setPage] = useState(1);
-  const pageCount = Math.max(1, Math.ceil(channels.length / PAGE_SIZE));
+  const visibleChannels = useMemo(() => showAllCatalogued
+    ? channels
+    : channels.filter((channel) => {
+      const status = availabilityByChannel[channel.key] || "unverified";
+      return status === "verified" || status === "unverified";
+    }), [availabilityByChannel, channels, showAllCatalogued]);
+  const pageCount = Math.max(1, Math.ceil(visibleChannels.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
-  const matchingSources = channels.reduce((total, channel) => total + channelSources(channel).length, 0);
-  useEffect(() => setPage(1), [category, country, language, region, channels.length]);
+  const matchingSources = visibleChannels.reduce((total, channel) => total + channelSources(channel).length, 0);
+  const excludedCount = channels.length - visibleChannels.length;
+  useEffect(() => setPage(1), [category, country, language, region, showAllCatalogued, visibleChannels.length]);
   const modeOptions = mode === "categories" ? catalog.categories.slice(0, 40) : mode === "countries" ? catalog.countries.slice(0, 80).map((item) => ({ id: item.code, name: `${item.flag} ${item.name}`, count: item.count })) : mode === "languages" ? catalog.languages.slice(0, 60) : catalog.regions.map((item) => ({ id: item.code, name: item.name, count: item.count }));
   const selected = mode === "categories" ? category : mode === "countries" ? country : mode === "languages" ? language : region;
   const select = (value: string) => { if (mode === "categories") setCategory(value); if (mode === "countries") setCountry(value); if (mode === "languages") setLanguage(value); if (mode === "regions") setRegion(value); };
   const clearAll = () => { setCategory("all"); setCountry("all"); setLanguage("all"); setRegion("all"); };
   return <div className="browse-page">
-    <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television</span><h1>Browse Live TV</h1><p>Every available channel, organized with IPTV-org feed and regional metadata.</p></div><div className="catalog-number"><strong>{channels.length.toLocaleString()}</strong><span>channels · {matchingSources.toLocaleString()} sources</span></div></div>
+    <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television</span><h1>Browse Live TV</h1><p>Working routes are ranked first. Unverified, regional, part-time, and offline catalogue entries are labelled honestly.</p></div><div className="catalog-number"><strong>{visibleChannels.length.toLocaleString()}</strong><span>{showAllCatalogued ? "catalogued" : "best available"} · {matchingSources.toLocaleString()} sources</span></div></div>
     <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{([["categories", <ListBullets />, "Categories"], ["countries", <GlobeHemisphereWest />, "Countries"], ["languages", <Translate />, "Languages"], ["regions", <MapPin />, "Regions"]] as Array<[BrowseMode, React.ReactNode, string]>).map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{category !== "all" && <b>{titleCase(category)}</b>}{country !== "all" && <b>{countryName(country)}</b>}{language !== "all" && <b>{language}</b>}{region !== "all" && <b>{catalog.regions.find((item) => item.code === region)?.name || region}</b>}<button onClick={clearAll}>Clear all</button></div></aside>
-      <section className="browse-results"><div className="filter-strip"><button className={selected === "all" ? "active" : ""} onClick={() => select("all")}>All</button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => select(item.id)}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {channels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, channels.length)} of {channels.length.toLocaleString()}</span></div></div>{channels.length ? <><div className="channel-grid">{channels.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE).map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>
+      <section className="browse-results"><div className="filter-strip"><button className={selected === "all" ? "active" : ""} onClick={() => select("all")}>All</button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => select(item.id)}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}{!showAllCatalogued && excludedCount > 0 ? ` · ${excludedCount.toLocaleString()} limited/offline hidden` : ""}</span></div><div className="availability-switch"><button className={!showAllCatalogued ? "active" : ""} onClick={() => setShowAllCatalogued(false)}>Best available</button><button className={showAllCatalogued ? "active" : ""} onClick={() => setShowAllCatalogued(true)}>All catalogued</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{visibleChannels.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE).map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching available channels" copy={channels.length ? "Choose All catalogued to inspect limited or offline entries." : "Clear a filter or search for something else."} />}</section></div>
   </div>;
 }
 
@@ -798,11 +858,16 @@ function Pagination({ page, pageCount, onPage }: { page: number; pageCount: numb
 }
 
 function GuideView({ catalog, country, setCountry, programmes, clock, status, loading, requiresVerification, verificationError, onVerified, onVerificationError, onRefresh, onPlay }: { catalog: Catalog; country: string; setCountry: (value: string) => void; programmes: Programme[]; clock: Date; status: string; loading: boolean; requiresVerification: boolean; verificationError: string | null; onVerified: (token: string) => void; onVerificationError: (message: string) => void; onRefresh: () => void; onPlay: (channel: Channel) => void }) {
+  const availabilityByChannel = useContext(PlaybackAvailabilityContext);
   const countryChannels = catalog.channels.filter(
     (channel) => channelMatchesCountry(channel, country, catalog.regions),
   );
   const byChannel = useMemo(() => { const map = new Map<string, Programme[]>(); programmes.forEach((item) => map.set(item.channelId, [...(map.get(item.channelId) || []), item])); return map; }, [programmes]);
-  const channels = [...countryChannels].sort((a, b) => Number(byChannel.has(b.id)) - Number(byChannel.has(a.id)) || a.name.localeCompare(b.name)).slice(0, 140);
+  const channels = [...countryChannels].sort((a, b) =>
+    Number(byChannel.has(b.id)) - Number(byChannel.has(a.id))
+    || availabilityRank(availabilityByChannel[a.key] || "unverified")
+      - availabilityRank(availabilityByChannel[b.key] || "unverified")
+    || a.name.localeCompare(b.name)).slice(0, 140);
   const start = new Date(clock); start.setMinutes(Math.floor(start.getMinutes() / 30) * 30, 0, 0);
   const end = new Date(start.getTime() + 4 * 60 * 60 * 1000);
   const times = Array.from({ length: 9 }, (_, index) => new Date(start.getTime() + index * 30 * 60 * 1000));
@@ -913,11 +978,11 @@ function Player({
     <div className="player-top">
       <button onClick={onClose}><CaretLeft /> Back to CrowFlix</button>
       <div className="player-source-state" aria-live="polite">
-        {playback.sourceTotal > 0 && <span>Source {playback.sourceNumber}/{playback.sourceTotal}</span>}
+        {playback.sourceTotal > 0 && <span>Route {playback.sourceNumber}/{playback.sourceTotal}</span>}
         <i className={playback.status === "playing" ? "online" : ""} />
         {playback.status === "playing" ? "Live" : titleCase(playback.status)}
       </div>
-      {playback.canNext && <button className="player-next-source" onClick={playback.next} title="Try the next available source">Next source <CaretRight /></button>}
+      {playback.canNext && <button className="player-next-source" onClick={playback.next} title="Try the next playback route">Next route <CaretRight /></button>}
       <div className="player-brand"><img src={BRAND_ICON} alt="" />CROW<strong>FLIX</strong></div>
     </div>
     {zapNotice && <div className="zap-osd" role="status">{zapNotice}</div>}
@@ -948,16 +1013,20 @@ function Player({
     </div>}
     {playback.status === "failed" && <div className="player-error">
       <WarningCircle weight="fill" />
-      <h2>{playback.sourceTotal ? "Every available source failed" : "No live source in this preview"}</h2>
+      <h2>{playback.sourceTotal === 0
+        ? "No live source is listed"
+        : playback.sourceTotal === 1
+          ? "This channel’s source could not play"
+          : "No working playback route was found"}</h2>
       <p>{playback.message}</p>
       <div className="player-error-actions">
         <button onClick={playback.retry}><ArrowsClockwise /> Retry</button>
-        {playback.canNext && <button onClick={playback.next}><CaretRight /> Next source</button>}
+        {playback.canNext && <button onClick={playback.next}><CaretRight /> Next route</button>}
         <button className="quiet" onClick={onClose}>Return</button>
       </div>
       {latestDiagnostic && <details className="player-diagnostics">
         <summary>Playback details</summary>
-        <code>{latestDiagnostic.transport.toUpperCase()} · {latestDiagnostic.reason} · {latestDiagnostic.endpoint}</code>
+        <code>{latestDiagnostic.delivery ? `${latestDiagnostic.delivery.toUpperCase()} · ` : ""}{latestDiagnostic.transport.toUpperCase()} · {latestDiagnostic.phase}{latestDiagnostic.httpStatus ? ` · HTTP ${latestDiagnostic.httpStatus}` : ""} · {latestDiagnostic.reason} · {latestDiagnostic.endpoint}</code>
         <small>No credentials, headers, paths, or URL query values are included.</small>
       </details>}
     </div>}

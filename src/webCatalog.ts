@@ -3,18 +3,33 @@
 // the same authoritative IPTV-org catalogue the desktop app uses.
 //
 // Differences from the desktop pipeline, by design:
-// - No Apsattv FAST-playlist overlays or known-dead Amagi repair yet; those
-//   move to the Cloudflare relay so the browser never inherits provider rules.
+// - The fixed Apsattv FAST-playlist snapshots are downloaded through the
+//   bounded CrowFlix relay path rather than directly from the browser.
 // - Caching uses the Cache API (12 h read-through, stale-on-failure) instead
 //   of the Tauri app-data cache file.
 
 import type { StreamSource, TransportHint } from "./playback/types";
+import { RELAY_BASE } from "./relayClient";
 
-export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v1";
-export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog";
+export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v2";
+export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v2";
 const WEB_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
 const API_BASE = "https://iptv-org.github.io/api";
 const FETCH_TIMEOUT_MS = 45_000;
+const OPTIONAL_FAST_FETCH_TIMEOUT_MS = 12_000;
+const MAX_OPTIONAL_FAST_PLAYLIST_BYTES = 2 * 1024 * 1024;
+const MAX_OPTIONAL_FAST_PLAYLIST_ENTRIES = 50_000;
+
+export const OPTIONAL_FAST_PLAYLISTS = [
+  "https://www.apsattv.com/ssungaus.m3u",
+  "https://www.apsattv.com/ssungnz.m3u",
+  "https://www.apsattv.com/ssungph.m3u",
+  "https://www.apsattv.com/ssungsg.m3u",
+  "https://www.apsattv.com/ssungth.m3u",
+] as const;
+
+export const ANI_ONE_DEAD_URL = "https://amg19223-amg19223c9-amgplt0019.playout.now3.amagi.tv/playlist/amg19223-amg19223c9-amgplt0019/playlist.m3u8";
+export const ANI_ONE_CURRENT_URL = "https://amg19223-amg19223c9-amgplt0352.playout.now3.amagi.tv/playlist/amg19223-amg19223c9-amgplt0352/playlist.m3u8";
 
 export type WebChannel = {
   key: string;
@@ -378,6 +393,266 @@ export function normalizeAndGroupChannels(channels: WebChannel[]): WebChannel[] 
   return result;
 }
 
+// --- conservative Apsattv/Amagi fallback overlay ---
+
+function amagiIdentityToken(value: string): string | null {
+  const match = /(?:^|[^a-z0-9])(amg\d+c\d+)(?![a-z0-9])/i.exec(value);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+/**
+ * Amagi deployment numbers change independently of the provider/channel pair.
+ * Only accept an identity when the same complete token occurs in both the
+ * Amagi hostname and path; this deliberately rejects broad provider matches.
+ */
+export function amagiProviderChannelIdentity(value: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname !== "amagi.tv" && !hostname.endsWith(".amagi.tv")) return null;
+  const hostnameIdentity = amagiIdentityToken(hostname);
+  const pathIdentity = amagiIdentityToken(parsed.pathname);
+  return hostnameIdentity && hostnameIdentity === pathIdentity ? hostnameIdentity : null;
+}
+
+function semanticChannelTitle(value: string): string | null {
+  const words = value
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .map((word) => word.toLowerCase());
+  const first = words[0];
+  if (first && first.length >= 3 && first.length <= 5 && /^\d+$/.test(first)) {
+    words.shift();
+  }
+  return words.length ? words.join(" ") : null;
+}
+
+export function amagiFallbackTitleMatches(
+  channelName: string,
+  sourceTitle?: string | null,
+  fallbackTitle?: string | null,
+): boolean {
+  if (!fallbackTitle) return false;
+  const fallback = semanticChannelTitle(fallbackTitle);
+  if (!fallback) return false;
+  return (sourceTitle ? semanticChannelTitle(sourceTitle) === fallback : false)
+    || semanticChannelTitle(channelName) === fallback;
+}
+
+function knownDeadAmagiReplacement(value: string): string | null {
+  const baseUrl = value.split(/[?#]/, 1)[0];
+  return baseUrl.toLowerCase() === ANI_ONE_DEAD_URL.toLowerCase()
+    ? ANI_ONE_CURRENT_URL
+    : null;
+}
+
+function repairedAmagiSource(source: StreamSource): StreamSource | null {
+  const replacement = knownDeadAmagiReplacement(source.url);
+  if (!replacement) return makeStreamSource(
+    source.title ?? null,
+    source.url,
+    source.referrer,
+    source.userAgent,
+    source.quality,
+    source.label,
+  );
+  return makeStreamSource(
+    source.title ?? null,
+    replacement,
+    source.referrer,
+    source.userAgent,
+    source.quality,
+    source.label,
+  );
+}
+
+/** Replace the one verified-dead Ani-One deployment without retaining it. */
+export function repairKnownDeadAmagiSources(channels: WebChannel[]): number {
+  let repaired = 0;
+  for (const channel of channels) {
+    const sources = channel.sources;
+    channel.sources = [];
+    for (const source of sources) {
+      const replacement = knownDeadAmagiReplacement(source.url);
+      const normalized = repairedAmagiSource(source);
+      if (!normalized) continue;
+      if (replacement) repaired += 1;
+      addSource(channel, normalized);
+    }
+    sortAndSyncSources(channel);
+  }
+  return repaired;
+}
+
+function extinfName(line: string): string {
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === '"') quoted = !quoted;
+    else if (character === "," && !quoted) {
+      return line.slice(index + 1).trim() || "Untitled channel";
+    }
+  }
+  return "Untitled channel";
+}
+
+/** Parse only the title and playable URL pairs needed for the fixed overlay. */
+export function parseOptionalFastPlaylist(content: string): StreamSource[] {
+  if (new TextEncoder().encode(content).byteLength > MAX_OPTIONAL_FAST_PLAYLIST_BYTES) return [];
+  const sources: StreamSource[] = [];
+  let pendingTitle: string | null = null;
+  let playableEntries = 0;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim().replace(/^\uFEFF/, "");
+    if (/^#extinf\b/i.test(line)) {
+      pendingTitle = extinfName(line);
+      continue;
+    }
+    if (!line || line.startsWith("#") || pendingTitle === null) continue;
+
+    playableEntries += 1;
+    if (playableEntries > MAX_OPTIONAL_FAST_PLAYLIST_ENTRIES) return [];
+    const rawUrl = line.split("|", 1)[0].trim();
+    const source = repairedAmagiSource({ title: pendingTitle, url: rawUrl });
+    pendingTitle = null;
+    if (source) sources.push(source);
+  }
+
+  return sources;
+}
+
+/**
+ * Add only same-identity, same-title Amagi deployments to existing channels.
+ * Existing channel and regional metadata remains canonical.
+ */
+export function overlayAmagiFastFallbacks(
+  channels: WebChannel[],
+  rawFallbackSources: readonly StreamSource[],
+): number {
+  const fallbacksByIdentity = new Map<string, StreamSource[]>();
+  for (const rawSource of rawFallbackSources) {
+    const source = repairedAmagiSource(rawSource);
+    if (!source) continue;
+    const identity = amagiProviderChannelIdentity(source.url);
+    if (!identity) continue;
+    const candidates = fallbacksByIdentity.get(identity) ?? [];
+    const existing = candidates.find((candidate) => candidate.id === source.id);
+    if (existing) mergeSource(existing, source);
+    else candidates.push(source);
+    fallbacksByIdentity.set(identity, candidates);
+  }
+  for (const candidates of fallbacksByIdentity.values()) candidates.sort(compareSources);
+
+  let added = 0;
+  for (const channel of channels) {
+    const templates = new Map<string, StreamSource>();
+    for (const source of channel.sources) {
+      const identity = amagiProviderChannelIdentity(source.url);
+      if (identity && !templates.has(identity)) templates.set(identity, source);
+    }
+
+    for (const [identity, template] of [...templates.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+      for (const fallback of fallbacksByIdentity.get(identity) ?? []) {
+        if (!amagiFallbackTitleMatches(channel.name, template.title, fallback.title)) continue;
+        const candidate = makeStreamSource(
+          template.title ?? fallback.title ?? null,
+          fallback.url,
+          fallback.referrer ?? template.referrer,
+          fallback.userAgent ?? template.userAgent,
+          fallback.quality ?? template.quality,
+          fallback.label ?? template.label,
+        );
+        if (!candidate) continue;
+        if (!channel.sources.some((source) => source.id === candidate.id)) added += 1;
+        addSource(channel, candidate);
+      }
+    }
+    sortAndSyncSources(channel);
+  }
+  return added;
+}
+
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+async function readBoundedPlaylist(response: Response): Promise<string | null> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_OPTIONAL_FAST_PLAYLIST_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  if (!response.body) return null;
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (total + value.byteLength > MAX_OPTIONAL_FAST_PLAYLIST_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchOptionalFastPlaylist(source: string, fetchImpl: FetchLike): Promise<StreamSource[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPTIONAL_FAST_FETCH_TIMEOUT_MS);
+  try {
+    const relayUrl = new URL(`${RELAY_BASE}/fetch`);
+    relayUrl.searchParams.set("url", source);
+    const response = await fetchImpl(relayUrl, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) return [];
+    const content = await readBoundedPlaylist(response);
+    return content === null ? [] : parseOptionalFastPlaylist(content);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Fetch all five fixed snapshots concurrently; every result is optional. */
+export async function loadOptionalFastFallbacks(fetchImpl: FetchLike = fetch): Promise<StreamSource[]> {
+  const playlists = await Promise.all(
+    OPTIONAL_FAST_PLAYLISTS.map((source) => fetchOptionalFastPlaylist(source, fetchImpl)),
+  );
+  const merged: StreamSource[] = [];
+  for (const source of playlists.flat()) {
+    const existing = merged.find((candidate) => candidate.id === source.id);
+    if (existing) mergeSource(existing, source);
+    else merged.push(source);
+  }
+  merged.sort(compareSources);
+  return merged;
+}
+
 function normalizedChannelTitle(value: string): [string, string] | null {
   const display = normalizePlainText(value.split(/\s+/).join(" "), 256);
   return display ? [display, display.toLowerCase()] : null;
@@ -529,7 +804,11 @@ function coverageOptionCounts(
 }
 
 /** Build the catalogue from already-fetched IPTV-org API payloads. Pure. */
-export function buildCatalogFromApi(api: ApiPayload, now = new Date()): WebCatalog {
+export function buildCatalogFromApi(
+  api: ApiPayload,
+  now = new Date(),
+  optionalFastFallbacks: readonly StreamSource[] = [],
+): WebCatalog {
   const blocked = new Set(api.blocklist.map((item) => item.channel));
   const excludedChannelIds = new Set<string>(blocked);
   for (const channel of api.channels) {
@@ -572,6 +851,8 @@ ${logo.feed}`;
       .map((stream) => channelFromApiStream(stream, channelMap, excludedChannelIds, feedMap, mainFeedMap, channelLogos, feedLogos, languageNames))
       .filter((channel): channel is WebChannel => Boolean(channel)),
   );
+  const repairedAmagiSources = repairKnownDeadAmagiSources(channels);
+  const addedFastFallbacks = overlayAmagiFastFallbacks(channels, optionalFastFallbacks);
 
   const categoryCounts = new Map<string, number>();
   const languageCounts = new Map<string, number>();
@@ -600,7 +881,9 @@ ${logo.feed}`;
   return {
     channels, categories, countries, languages, regions,
     updatedAt: now.toISOString(),
-    source: "IPTV-org API",
+    source: repairedAmagiSources + addedFastFallbacks > 0
+      ? "IPTV-org API + current FAST fallbacks"
+      : "IPTV-org API",
   };
 }
 
@@ -654,8 +937,7 @@ export async function loadWebCatalog(force = false): Promise<WebCatalog> {
     return { ...cached.catalog, source: `${cached.catalog.source} · browser cache` };
   }
   try {
-    const [channels, feeds, logos, streams, categories, languages, countries, regions, blocklist] =
-      await Promise.all([
+    const requiredCatalog = Promise.all([
         fetchJson<ApiChannel[]>("channels"),
         fetchJson<ApiFeed[]>("feeds"),
         fetchJson<ApiLogo[]>("logos"),
@@ -666,7 +948,18 @@ export async function loadWebCatalog(force = false): Promise<WebCatalog> {
         fetchJson<ApiRegion[]>("regions"),
         fetchJson<ApiBlock[]>("blocklist"),
       ]);
-    const catalog = buildCatalogFromApi({ channels, feeds, logos, streams, categories, languages, countries, regions, blocklist });
+    const [
+      [channels, feeds, logos, streams, categories, languages, countries, regions, blocklist],
+      optionalFastFallbacks,
+    ] = await Promise.all([
+      requiredCatalog,
+      loadOptionalFastFallbacks().catch(() => []),
+    ]);
+    const catalog = buildCatalogFromApi(
+      { channels, feeds, logos, streams, categories, languages, countries, regions, blocklist },
+      new Date(),
+      optionalFastFallbacks,
+    );
     void writeCache(catalog);
     return catalog;
   } catch (error) {

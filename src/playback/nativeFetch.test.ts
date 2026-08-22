@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createMediaFetcher,
   DEFAULT_NATIVE_USER_AGENT,
+  MediaRequestError,
   probeSource,
   type FetchImplementation,
 } from "./nativeFetch";
@@ -96,5 +97,13 @@ describe("probeSource", () => {
     const result = await probeSource(protectedSource, fetcher);
     expect(receivedRange).toBe("bytes=0-4095");
     expect(result.kind).toBe("hls");
+  });
+
+  it("preserves a failed probe HTTP status without including its URL", async () => {
+    const fetcher = vi.fn(async () => new Response("forbidden", { status: 403 }));
+    const error = await probeSource(protectedSource, fetcher).catch((value) => value);
+    expect(error).toBeInstanceOf(MediaRequestError);
+    expect(error).toMatchObject({ status: 403, message: "Media request returned HTTP 403" });
+    expect(String(error)).not.toContain(protectedSource.url);
   });
 });

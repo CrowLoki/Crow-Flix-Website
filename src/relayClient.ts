@@ -4,7 +4,7 @@
 //
 // The relay never bypasses provider geographic or account restrictions.
 
-import type { StreamSource } from "./playback/types";
+import { sourceIdentifier, type StreamSource } from "./playback/types";
 
 export const RELAY_BASE = (
   (import.meta.env.VITE_RELAY_BASE as string | undefined)?.trim()
@@ -78,20 +78,160 @@ export function relayStreamUrl(source: StreamSource): string | null {
   return `${RELAY_BASE}/stream?${query}`;
 }
 
-/** Wrap a source for web playback via the relay when it needs headers. */
-export function toWebPlayableSource(source: StreamSource): StreamSource {
-  if (!source.requiresHeaders) return source;
-  const url = relayStreamUrl(source);
-  if (!url) return source;
+function browserRouteId(
+  source: StreamSource,
+  route: "direct" | "relay" | "https-upgrade",
+): string {
+  return `${sourceIdentifier(source)}:${route}`;
+}
+
+function directWebSource(
+  source: StreamSource,
+  url = source.url,
+  route: "direct" | "https-upgrade" = "direct",
+): StreamSource {
   return {
     ...source,
+    id: browserRouteId(source, route),
+    sourceId: undefined,
     url,
+    delivery: "direct",
+    logicalUrl: url,
+  };
+}
+
+function httpsUpgradeSource(source: StreamSource): StreamSource | null {
+  try {
+    const upgraded = new URL(source.url);
+    if (upgraded.protocol !== "http:") return null;
+    upgraded.protocol = "https:";
+    return directWebSource(source, upgraded.href, "https-upgrade");
+  } catch {
+    return null;
+  }
+}
+
+function relayedWebSource(source: StreamSource): StreamSource | null {
+  const url = relayStreamUrl(source);
+  if (!url) return null;
+  return {
+    ...source,
+    id: browserRouteId(source, "relay"),
+    sourceId: undefined,
+    url,
+    logicalUrl: source.url,
+    delivery: "relay",
     referrer: null,
     userAgent: null,
     requiresHeaders: false,
     // The relay path ends in /stream, so keep the original transport hint.
     transport: source.transport ?? null,
   };
+}
+
+/**
+ * Build deterministic browser playback attempts for one provider source.
+ *
+ * - ordinary HTTPS is tried directly, then through the relay;
+ * - HTTP first uses the relay, then an HTTPS-upgraded direct attempt when no
+ *   restricted headers are needed; raw HTTP never reaches the HTTPS page;
+ * - sources that require restricted headers use the relay exclusively.
+ *
+ * Native/Tauri callers do not use this mapping and keep their original source.
+ */
+export function toWebPlayableSources(source: StreamSource): StreamSource[] {
+  if (!source.url || !/^https?:\/\//i.test(source.url)) return [source];
+  const relayed = relayedWebSource(source);
+  const needsHeaders = Boolean(source.requiresHeaders || source.referrer || source.userAgent);
+  if (needsHeaders) return relayed ? [relayed] : [];
+  if (source.url.toLowerCase().startsWith("http://")) {
+    const upgraded = httpsUpgradeSource(source);
+    return [relayed, upgraded].filter((route): route is StreamSource => Boolean(route));
+  }
+  return relayed ? [directWebSource(source), relayed] : [directWebSource(source)];
+}
+
+/** Compatibility helper for callers that only accept one route. */
+export function toWebPlayableSource(source: StreamSource): StreamSource {
+  return toWebPlayableSources(source)[0] ?? source;
+}
+
+function relayParameters(source: StreamSource): {
+  base: URL;
+  userAgent: string | null;
+  referrer: string | null;
+} | null {
+  if (source.delivery !== "relay") return null;
+  try {
+    const base = new URL(source.url);
+    const configuredRelay = new URL(RELAY_BASE);
+    if (
+      base.origin !== configuredRelay.origin
+      || base.pathname !== "/stream"
+      || !base.searchParams.has("url")
+    ) return null;
+    return {
+      base,
+      userAgent: base.searchParams.get("ua"),
+      referrer: base.searchParams.get("referer"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Route a dash.js provider request through the same relay source. dash.js is
+ * still given logical provider URLs, so relative BaseURL, initialization and
+ * media references resolve against the provider rather than `/stream`.
+ */
+export function routeDashRequestUrl(requestUrl: string, source: StreamSource): string {
+  const parameters = relayParameters(source);
+  if (!parameters) return requestUrl;
+  try {
+    const logicalBase = source.logicalUrl
+      || parameters.base.searchParams.get("url")
+      || undefined;
+    const request = new URL(requestUrl, logicalBase);
+    if (
+      request.origin === parameters.base.origin
+      && request.pathname === parameters.base.pathname
+      && request.searchParams.has("url")
+    ) {
+      return request.href;
+    }
+    if (request.protocol !== "http:" && request.protocol !== "https:") return requestUrl;
+    const relay = new URL("/stream", parameters.base.origin);
+    relay.searchParams.set("url", request.href);
+    if (parameters.userAgent !== null) relay.searchParams.set("ua", parameters.userAgent);
+    if (parameters.referrer !== null) relay.searchParams.set("referer", parameters.referrer);
+    return relay.href;
+  } catch {
+    return requestUrl;
+  }
+}
+
+/** Recover the provider-facing URL from one relayed DASH request. */
+export function logicalDashRequestUrl(
+  requestUrl: string,
+  source: StreamSource,
+): string {
+  if (source.delivery !== "relay") return requestUrl;
+  try {
+    const request = new URL(requestUrl, source.logicalUrl || undefined);
+    const relay = new URL(RELAY_BASE);
+    if (request.origin !== relay.origin || request.pathname !== "/stream") {
+      return request.href;
+    }
+    const logical = request.searchParams.get("url");
+    if (!logical) return source.logicalUrl || requestUrl;
+    const parsed = new URL(logical);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.href
+      : source.logicalUrl || requestUrl;
+  } catch {
+    return source.logicalUrl || requestUrl;
+  }
 }
 
 /** Bounded fetch of a user-supplied playlist/guide URL through the relay. */

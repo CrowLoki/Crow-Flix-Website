@@ -4,6 +4,14 @@ import type { MediaPlayerClass } from "dashjs";
 import { createTauriHlsLoader } from "./TauriHlsLoader";
 import { installNativeDashTransport } from "./dashTransport";
 import {
+  describeDashFailure,
+  describeHlsFailure,
+  describeMediaElementFailure,
+  extractHttpStatus,
+  networkFailureMessage,
+  type FailureDetails,
+} from "./failureDetails";
+import {
   classifySource,
   orderPlaybackSources,
   sanitizeStreamUrl,
@@ -21,15 +29,18 @@ import {
 } from "./types";
 import { ProgressWatchdog } from "./stallWatchdog";
 
-const STARTUP_TIMEOUT_MS = 20_000;
-const STALL_TIMEOUT_MS = 18_000;
+// Fail a dead manifest promptly, but allow a healthy slow provider enough time
+// to deliver and decode its first media segment.
+const MANIFEST_FIRST_BYTE_TIMEOUT_MS = 7_000;
+const MANIFEST_LOAD_TIMEOUT_MS = 10_000;
+const STARTUP_TIMEOUT_MS = 35_000;
+const STALL_TIMEOUT_MS = 25_000;
 const HEALTH_STORAGE_KEY = "crowflix:source-health:v1";
 const PREFERRED_STORAGE_KEY = "crowflix:preferred-source:v1";
+export const SOURCE_HEALTH_CHANGED_EVENT = "crowflix:source-health-changed";
 
 function isManifestNetworkFailure(details: unknown): boolean {
-  return details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR
-    || details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT
-    || details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR;
+  return /manifest|level|playlist|track|steering/i.test(String(details ?? ""));
 }
 
 export type PlaybackChannel = {
@@ -110,7 +121,7 @@ export class PlaybackRun {
     private readonly video: HTMLVideoElement,
     private readonly update: (state: PlaybackControllerState) => void,
   ) {
-    this.health = readRecord<SourceHealth>(HEALTH_STORAGE_KEY);
+    this.health = readPlaybackHealth();
     this.refreshSourceOrder();
   }
 
@@ -128,7 +139,7 @@ export class PlaybackRun {
 
   retry(): void {
     if (this.disposed) return;
-    this.health = readRecord<SourceHealth>(HEALTH_STORAGE_KEY);
+    this.health = readPlaybackHealth();
     this.refreshSourceOrder();
     if (!this.orderedSources.length) return;
     this.startAttempt(0, "loading");
@@ -169,8 +180,8 @@ export class PlaybackRun {
     this.publish(
       status,
       status === "switching"
-        ? `Trying source ${index + 1} of ${this.orderedSources.length}…`
-        : `Connecting to source ${index + 1} of ${this.orderedSources.length}…`,
+        ? `Trying playback route ${index + 1} of ${this.orderedSources.length}…`
+        : `Connecting through route ${index + 1} of ${this.orderedSources.length}…`,
     );
     void this.prepareAndPlay(source, token);
   }
@@ -188,10 +199,24 @@ export class PlaybackRun {
       try {
         const probed = await probeSource(selected, undefined, probeController.signal);
         if (!this.isActive(token)) return;
-        selected = { ...selected, url: probed.url };
+        selected = {
+          ...selected,
+          url: probed.url,
+          logicalUrl: selected.delivery === "relay"
+            ? selected.logicalUrl
+            : probed.url,
+        };
         kind = probed.kind === "unknown" ? "progressive" : probed.kind;
-      } catch {
-        this.fail(token, selected, kind, "network", "The source did not answer its format check.");
+      } catch (error) {
+        const httpStatus = extractHttpStatus(error);
+        this.fail(
+          token,
+          selected,
+          kind,
+          "network",
+          networkFailureMessage("probe", httpStatus, selected.delivery),
+          { phase: "probe", httpStatus },
+        );
         return;
       }
     }
@@ -203,6 +228,7 @@ export class PlaybackRun {
         kind,
         "unsupported",
         "This source uses a streaming protocol that CrowFlix cannot play.",
+        { phase: "protocol" },
       );
       return;
     }
@@ -212,6 +238,7 @@ export class PlaybackRun {
   private installPlayer(source: StreamSource, kind: PlaybackKind, token: number): void {
     const cleanupTasks: Array<() => void> = [];
     let cleaned = false;
+    let startupMilestone = "the provider connection";
     this.attemptCleanup = () => {
       if (cleaned) return;
       cleaned = true;
@@ -226,7 +253,8 @@ export class PlaybackRun {
         source,
         kind,
         "startup-timeout",
-        "This source did not begin playing in time.",
+        `The source reached ${startupMilestone}, but playable media did not arrive within 35 seconds.`,
+        { phase: "startup" },
       ),
       STARTUP_TIMEOUT_MS,
     );
@@ -247,7 +275,8 @@ export class PlaybackRun {
         source,
         kind,
         "stall-timeout",
-        "Playback stopped receiving media.",
+        "The live stream stopped delivering playable media for 25 seconds.",
+        { phase: "stall" },
       ),
     );
     const attemptPlay = () => {
@@ -293,7 +322,19 @@ export class PlaybackRun {
         hls.recoverMediaError();
         return;
       }
-      this.fail(token, source, kind, "media", "The source returned media the player could not decode.");
+      const failure = describeMediaElementFailure(
+        this.video.error?.code,
+        hasPlayed,
+        source,
+      );
+      this.fail(
+        token,
+        source,
+        kind,
+        failure.reason,
+        failure.message,
+        failure,
+      );
     };
     const addVideoListener = <K extends keyof HTMLMediaElementEventMap>(
       event: K,
@@ -317,22 +358,57 @@ export class PlaybackRun {
         enableWorker: true,
         lowLatencyMode: true,
         backBufferLength: 30,
+        manifestLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: MANIFEST_FIRST_BYTE_TIMEOUT_MS,
+            maxLoadTimeMs: MANIFEST_LOAD_TIMEOUT_MS,
+            timeoutRetry: null,
+            errorRetry: null,
+          },
+        },
+        playlistLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: MANIFEST_FIRST_BYTE_TIMEOUT_MS,
+            maxLoadTimeMs: MANIFEST_LOAD_TIMEOUT_MS,
+            timeoutRetry: null,
+            errorRetry: null,
+          },
+        },
         loader: createTauriHlsLoader(source),
       });
       hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        startupMilestone = "the browser media engine";
         if (this.isActive(token)) hls?.loadSource(source.url);
       });
-      hls.on(Hls.Events.MANIFEST_PARSED, attemptPlay);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        startupMilestone = "a parsed stream manifest";
+        attemptPlay();
+      });
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        startupMilestone = "downloaded media segments";
+      });
+      hls.on(Hls.Events.FRAG_DECRYPTED, () => {
+        startupMilestone = "decrypted media segments";
+      });
+      hls.on(Hls.Events.FRAG_PARSED, () => {
+        startupMilestone = "parsed audio/video segments";
+      });
+      hls.on(Hls.Events.BUFFER_CODECS, () => {
+        startupMilestone = "detected browser codecs";
+      });
+      hls.on(Hls.Events.BUFFER_APPENDED, () => {
+        startupMilestone = "buffered browser media";
+      });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!this.isActive(token) || !data.fatal) return;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !networkRecoveryUsed) {
+        if (
+          data.type === Hls.ErrorTypes.NETWORK_ERROR
+          && !isManifestNetworkFailure(data.details)
+          && !networkRecoveryUsed
+        ) {
           networkRecoveryUsed = true;
           this.publish("loading", "Retrying this source…");
-          if (isManifestNetworkFailure(data.details)) {
-            hls?.loadSource(source.url);
-          } else {
-            hls?.startLoad();
-          }
+          hls?.startLoad();
           return;
         }
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecoveryUsed) {
@@ -341,15 +417,8 @@ export class PlaybackRun {
           hls?.recoverMediaError();
           return;
         }
-        this.fail(
-          token,
-          source,
-          kind,
-          data.type === Hls.ErrorTypes.NETWORK_ERROR ? "network" : "media",
-          data.type === Hls.ErrorTypes.NETWORK_ERROR
-            ? "The source stopped responding."
-            : "The source returned media the player could not decode.",
-        );
+        const failure = describeHlsFailure(data, hasPlayed, source);
+        this.fail(token, source, kind, failure.reason, failure.message, failure);
       });
       hls.attachMedia(this.video);
       cleanupTasks.push(() => {
@@ -366,6 +435,7 @@ export class PlaybackRun {
           kind,
           "unsupported",
           "This HLS source needs playback support that is unavailable on this device.",
+          { phase: "protocol" },
         );
         return;
       }
@@ -380,11 +450,14 @@ export class PlaybackRun {
           dashPlayer.setConfig({
             streaming: {
               lowLatencyEnabled: false,
-              retryAttempts: { MPD: 2, MediaSegment: 2, InitializationSegment: 2 },
+              manifestRequestTimeout: 8_000,
+              fragmentRequestTimeout: 35_000,
+              retryAttempts: { MPD: 0, MediaSegment: 2, InitializationSegment: 2 },
             },
           });
-          const onDashError = () => {
-            this.fail(token, source, kind, "network", "The DASH source could not be loaded.");
+          const onDashError = (data: unknown) => {
+            const failure = describeDashFailure(data, hasPlayed, source);
+            this.fail(token, source, kind, failure.reason, failure.message, failure);
           };
           dashPlayer.on(dashModule.MediaPlayer.events.ERROR, onDashError);
           cleanupTasks.push(() => dashPlayer?.off(dashModule.MediaPlayer.events.ERROR, onDashError));
@@ -392,12 +465,26 @@ export class PlaybackRun {
             dashPlayer?.destroy();
             dashPlayer = null;
           });
-          dashPlayer.initialize(this.video, source.url, false);
+          dashPlayer.initialize(this.video, source.logicalUrl || source.url, false);
         } catch {
-          this.fail(token, source, kind, "unsupported", "DASH playback could not be initialized.");
+          this.fail(
+            token,
+            source,
+            kind,
+            "unsupported",
+            "DASH playback could not be initialized on this browser.",
+            { phase: "protocol" },
+          );
         }
       }).catch(() => {
-        this.fail(token, source, kind, "unsupported", "DASH playback could not be loaded.");
+        this.fail(
+          token,
+          source,
+          kind,
+          "unsupported",
+          "The DASH player could not be loaded on this browser.",
+          { phase: "protocol" },
+        );
       });
     } else {
       if (sourceNeedsHeaders(source)) {
@@ -407,6 +494,7 @@ export class PlaybackRun {
           kind,
           "unsupported",
           "This direct media source requires request headers that the video element cannot attach.",
+          { phase: "protocol" },
         );
         return;
       }
@@ -422,6 +510,7 @@ export class PlaybackRun {
     kind: PlaybackKind,
     reason: PlaybackFailureReason,
     message: string,
+    details: Pick<FailureDetails, "phase" | "httpStatus"> = { phase: "media" },
   ): void {
     if (!this.isActive(token)) return;
     this.generation += 1;
@@ -431,8 +520,11 @@ export class PlaybackRun {
         sourceId: sourceIdentifier(source, this.cursor),
         sourceNumber: this.cursor + 1,
         transport: kind,
-        endpoint: sanitizeStreamUrl(source.url),
+        endpoint: sanitizeStreamUrl(source.logicalUrl || source.url),
         reason,
+        phase: details.phase,
+        ...(details.httpStatus ? { httpStatus: details.httpStatus } : {}),
+        ...(source.delivery ? { delivery: source.delivery } : {}),
         at: new Date().toISOString(),
       },
     ].slice(-8);
@@ -443,7 +535,7 @@ export class PlaybackRun {
     this.attemptCleanup = null;
 
     if (shouldFallback(reason) && this.cursor + 1 < this.orderedSources.length) {
-      this.publish("switching", `${message} Trying the next source…`);
+      this.publish("switching", `${message} Trying the next playback route…`);
       queueMicrotask(() => this.startAttempt(this.cursor + 1, "switching"));
       return;
     }
@@ -483,6 +575,42 @@ export class PlaybackRun {
   }
 }
 
+/** Read the local, privacy-preserving route health snapshot used for ordering. */
+export function readPlaybackHealth(): Record<string, SourceHealth> {
+  const output: Record<string, SourceHealth> = Object.create(null) as Record<string, SourceHealth>;
+  let parsed: unknown;
+  try {
+    const raw = localStorage.getItem(HEALTH_STORAGE_KEY);
+    parsed = raw ? JSON.parse(raw) : {};
+  } catch {
+    return output;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return output;
+  for (const [id, candidate] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!id || !candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const value = candidate as Record<string, unknown>;
+    const failures = Number(value.failures);
+    const cooldownUntil = Number(value.cooldownUntil);
+    const lastSuccessAt = value.lastSuccessAt === undefined
+      ? undefined
+      : Number(value.lastSuccessAt);
+    if (
+      !Number.isInteger(failures)
+      || failures < 0
+      || failures > 8
+      || !Number.isFinite(cooldownUntil)
+      || cooldownUntil < 0
+      || (lastSuccessAt !== undefined && (!Number.isFinite(lastSuccessAt) || lastSuccessAt < 0))
+    ) continue;
+    output[id] = {
+      failures,
+      cooldownUntil,
+      ...(lastSuccessAt === undefined ? {} : { lastSuccessAt }),
+    };
+  }
+  return output;
+}
+
 function sourceNeedsHeaders(source: StreamSource): boolean {
   return Boolean(source.requiresHeaders || source.referrer || source.userAgent);
 }
@@ -500,6 +628,14 @@ function writeRecord<T>(key: string, value: Record<string, T>): void {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage is optional */ }
 }
 
+function announceHealthChange(): void {
+  try {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event(SOURCE_HEALTH_CHANGED_EVENT));
+    }
+  } catch { /* the local health hint remains optional */ }
+}
+
 function recordSourceFailure(
   source: StreamSource,
   health: Record<string, SourceHealth>,
@@ -512,6 +648,7 @@ function recordSourceFailure(
     cooldownUntil: Date.now() + Math.min(30 * 60_000, 30_000 * (2 ** (failures - 1))),
   };
   writeRecord(HEALTH_STORAGE_KEY, health);
+  announceHealthChange();
 }
 
 function recordSourceSuccess(
@@ -522,6 +659,7 @@ function recordSourceSuccess(
   const id = sourceIdentifier(source);
   health[id] = { failures: 0, cooldownUntil: 0, lastSuccessAt: Date.now() };
   writeRecord(HEALTH_STORAGE_KEY, health);
+  announceHealthChange();
   const preferred = readRecord<string>(PREFERRED_STORAGE_KEY);
   preferred[channelKey] = id;
   writeRecord(PREFERRED_STORAGE_KEY, preferred);

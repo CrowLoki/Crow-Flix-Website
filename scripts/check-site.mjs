@@ -83,7 +83,7 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSource", "<video", "Next source"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "<video", "Next route", "Best available", "All catalogued"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 assert(!app.includes("Download Crow-Flix for Windows"), "The browser app was replaced by a desktop download page");
@@ -94,6 +94,19 @@ assert(!app.includes("A cinematic desktop IPTV player"), "The About page still i
 const relayClient = await readFile(path.join(repositoryRoot, "src", "relayClient.ts"), "utf8");
 assert(relayClient.includes(relayOrigin), "The browser app is not wired to the CrowFlix relay");
 assert(relayClient.includes("X-Turnstile-Token"), "Guide requests do not send the Turnstile token in a header");
+for (const value of ["toWebPlayableSources", "https-upgrade", "routeDashRequestUrl", 'delivery: "relay"']) {
+  assert(relayClient.includes(value), `Browser playback routing is missing: ${value}`);
+}
+
+const relayIndex = await readFile(path.join(repositoryRoot, "relay", "src", "index.ts"), "utf8");
+for (const value of ["fetchValidatedWithUrl", 'upstreamHeaders.set("Range"', '"content-range"', "STREAM_FIRST_BYTE_TIMEOUT_MS"]) {
+  assert(relayIndex.includes(value), `Relay playback transport is missing: ${value}`);
+}
+
+const webCatalog = await readFile(path.join(repositoryRoot, "src", "webCatalog.ts"), "utf8");
+for (const value of ["OPTIONAL_FAST_PLAYLISTS", "overlayAmagiFastFallbacks", "current FAST fallbacks", "crowflix-catalog-v2"]) {
+  assert(webCatalog.includes(value), `Catalogue fallback repair is missing: ${value}`);
+}
 
 const turnstileGate = await readFile(path.join(repositoryRoot, "src", "TurnstileGuideGate.tsx"), "utf8");
 for (const value of ["https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit", "epg_load", "VITE_TURNSTILE_SITEKEY"]) {
