@@ -32,6 +32,21 @@ export type StreamSource = {
   delivery?: "direct" | "relay";
   /** Provider-facing URL used for resolving relative DASH resources. */
   logicalUrl?: string;
+  /** Recent, exact-identity health hint from the optional static index. */
+  catalogHealth?: CatalogSourceHealth;
+};
+
+export type CatalogSourceHealthStatus =
+  | "online"
+  | "offline"
+  | "blocked"
+  | "timeout"
+  | "error";
+
+export type CatalogSourceHealth = {
+  status: CatalogSourceHealthStatus;
+  score: number;
+  checkedAt: number;
 };
 
 export type PlaybackKind =

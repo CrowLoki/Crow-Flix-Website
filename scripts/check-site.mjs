@@ -34,6 +34,7 @@ for (const file of [
   "src/App.tsx",
   "src/App.css",
   "src/webCatalog.ts",
+  "src/streamHealthIndex.ts",
   "src/relayClient.ts",
   "src/TurnstileGuideGate.tsx",
   "src/playback/usePlaybackController.ts",
@@ -104,8 +105,13 @@ for (const value of ["fetchValidatedWithUrl", 'upstreamHeaders.set("Range"', '"c
 }
 
 const webCatalog = await readFile(path.join(repositoryRoot, "src", "webCatalog.ts"), "utf8");
-for (const value of ["OPTIONAL_FAST_PLAYLISTS", "overlayAmagiFastFallbacks", "current FAST fallbacks", "crowflix-catalog-v2"]) {
+for (const value of ["OPTIONAL_FAST_PLAYLISTS", "overlayAmagiFastFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "recent source health", "current FAST fallbacks", "crowflix-catalog-v2"]) {
   assert(webCatalog.includes(value), `Catalogue fallback repair is missing: ${value}`);
+}
+
+const streamHealth = await readFile(path.join(repositoryRoot, "src", "streamHealthIndex.ts"), "utf8");
+for (const value of ["streams.json.gz", "DecompressionStream", "MAX_COMPRESSED_BYTES", "MAX_DECOMPRESSED_BYTES", "streamHealthIdentity", "STREAM_HEALTH_TTL_MS"]) {
+  assert(streamHealth.includes(value), `Whole-catalogue health safety is missing: ${value}`);
 }
 
 const turnstileGate = await readFile(path.join(repositoryRoot, "src", "TurnstileGuideGate.tsx"), "utf8");
@@ -156,7 +162,7 @@ assert(!headers.includes("script-src 'none'"), "_headers still disables the brow
 assert(!headers.includes("unsafe-eval"), "_headers permits unsafe-eval");
 
 const privacy = await readFile(path.join(repositoryRoot, "PRIVACY.md"), "utf8");
-for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "does not attach search text", "clear site data for `crowflix.tv`"]) {
+for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "IPTV Nexus", "does not attach search text", "clear site data for `crowflix.tv`"]) {
   assert(privacy.includes(value), `PRIVACY.md is missing: ${value}`);
 }
 

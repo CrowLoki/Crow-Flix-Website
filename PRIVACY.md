@@ -43,6 +43,8 @@ Depending on the feature used, the website can connect to:
 
 - Cloudflare Pages, which serves the website;
 - IPTV-org catalogue and metadata endpoints;
+- the static IPTV Nexus stream-health index, used only as an optional fresh
+  hint for exact IPTV-org source identities;
 - channel-logo and artwork hosts;
 - media hosts and content-delivery networks listed by the catalogue;
 - a bounded readiness check for a small set of currently relevant channels;
@@ -59,6 +61,12 @@ The readiness check uses at most three concurrent requests and caches a route
 result for 15 minutes. It reads only bounded manifest data and the key,
 initialization data, or first media bytes needed to determine whether playback
 can start. It does not play or download a complete programme in the background.
+
+The optional health index is downloaded as a bounded compressed static file.
+CrowFlix does not send searches, favourites, recent channels, Web Library data,
+or a list of the visitor's channels to IPTV Nexus. The index can only annotate
+an exact URL-and-header identity already present in the current IPTV-org data;
+it cannot add or replace a stream by itself.
 
 ## Crow-Flix relay
 

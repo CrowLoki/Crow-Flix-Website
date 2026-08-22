@@ -132,6 +132,41 @@ describe("PlaybackRun retry", () => {
     run.dispose();
   });
 
+  it("keeps a locally READY route ahead of a higher-scored catalogue hint", () => {
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    storage.setItem("crowflix:source-preflight:v1", JSON.stringify({
+      ready: { status: "ready", checkedAt: Date.now(), transport: "hls" },
+    }));
+    const updates: PlaybackControllerState[] = [];
+    const video = {
+      ended: false,
+      addEventListener: vi.fn(),
+      load: vi.fn(),
+      pause: vi.fn(),
+      play: vi.fn(async () => undefined),
+      removeAttribute: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLVideoElement;
+    const run = new PlaybackRun({
+      key: "ready-priority",
+      name: "Ready Priority",
+      sources: [
+        { id: "catalogue", url: "https://provider.test/catalogue.m3u8", preferenceScore: 99_999 },
+        { id: "ready", url: "https://provider.test/ready.m3u8", preferenceScore: 1 },
+      ],
+    }, video, (state) => updates.push(state));
+
+    run.start();
+
+    expect(updates[0]).toMatchObject({
+      status: "loading",
+      source: { id: "ready" },
+      sourceNumber: 1,
+    });
+    run.dispose();
+  });
+
   it("exports health safely and announces a source-health change", async () => {
     const storage = memoryStorage();
     const dispatchEvent = vi.fn();

@@ -74,6 +74,16 @@ Live and ready routes rank first, and the default browser view keeps clearly
 limited or failed entries out of the way without deleting them from the full
 catalogue.
 
+Because IPTV-org no longer publishes stream-status fields, the browser also
+uses the free, MIT-licensed
+[IPTV Nexus](https://github.com/dearbulut/iptv) static health index as an
+optional whole-catalogue hint. CrowFlix accepts only fresh records that match an existing IPTV-org URL,
+Referer, and User-Agent exactly; it never imports an unknown URL from the index.
+An `online` hint improves source order, while a recent `offline`, `timeout`, or
+`error` result keeps a dead-only channel out of the default view. A local
+CrowFlix preflight or successful playback always takes priority, and failure of
+the optional index leaves the normal catalogue path working.
+
 Live programme-guide requests use Cloudflare Turnstile in Managed mode. The
 browser obtains a one-time `epg_load` token, and the relay validates it through
 Siteverify with exact action and hostname checks before performing guide

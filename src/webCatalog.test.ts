@@ -3,6 +3,7 @@ import {
   ANI_ONE_CURRENT_URL,
   ANI_ONE_DEAD_URL,
   OPTIONAL_FAST_PLAYLISTS,
+  applyStreamHealthHints,
   amagiFallbackTitleMatches,
   amagiProviderChannelIdentity,
   buildCatalogFromApi,
@@ -15,6 +16,7 @@ import {
   type ApiPayload,
   type WebChannel,
 } from "./webCatalog";
+import { streamHealthIdentity } from "./streamHealthIndex";
 
 function payload(overrides: Partial<ApiPayload> = {}): ApiPayload {
   return {
@@ -126,6 +128,36 @@ describe("buildCatalogFromApi", () => {
     expect(channel.sources).toHaveLength(2);
     expect(channel.url).toBe("https://cdn.example.com/hd.m3u8");
     expect(channel.quality).toBe("1080p");
+  });
+
+  it("uses fresh exact-identity health hints to put a working source first", () => {
+    const now = Date.parse("2026-08-23T01:00:00.000Z");
+    const catalog = buildCatalogFromApi(payload({
+      channels: [{ id: "News.us", name: "Crow News", country: "US" }],
+      streams: [
+        { channel: "News.us", title: "Dead HD", url: "https://cdn.example.com/dead.m3u8", quality: "1080p" },
+        { channel: "News.us", title: "Working SD", url: "https://cdn.example.com/working.m3u8", quality: "480p" },
+      ],
+    }));
+    const matched = applyStreamHealthHints(catalog.channels, new Map([
+      [streamHealthIdentity("https://cdn.example.com/dead.m3u8"), {
+        status: "offline" as const,
+        score: 0,
+        checkedAt: now - 1,
+      }],
+      [streamHealthIdentity("https://cdn.example.com/working.m3u8"), {
+        status: "online" as const,
+        score: 96,
+        checkedAt: now - 1,
+      }],
+    ]), now);
+
+    expect(matched).toBe(2);
+    expect(catalog.channels[0].sources.map((source) => source.url)).toEqual([
+      "https://cdn.example.com/working.m3u8",
+      "https://cdn.example.com/dead.m3u8",
+    ]);
+    expect(catalog.channels[0].url).toBe("https://cdn.example.com/working.m3u8");
   });
 
   it("deprioritises geo-blocked sources in ordering", () => {

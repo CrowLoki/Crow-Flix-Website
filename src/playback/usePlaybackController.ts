@@ -562,14 +562,14 @@ export class PlaybackRun {
 
   private refreshSourceOrder(): void {
     const preferred = readRecord<string>(PREFERRED_STORAGE_KEY)[this.channel.key];
-    const readinessOrdered = orderSourcesByPreflight(
+    const healthOrdered = orderPlaybackSources(
       this.channel.sources,
-      readSourcePreflights(),
-    );
-    this.orderedSources = orderPlaybackSources(
-      readinessOrdered,
       this.health,
       preferred,
+    );
+    this.orderedSources = orderSourcesByPreflight(
+      healthOrdered,
+      readSourcePreflights(),
     );
   }
 
