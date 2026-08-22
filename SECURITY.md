@@ -16,6 +16,13 @@ The website and relay do not bypass provider geographic, subscription, token,
 or account restrictions. A provider outage, moved stream, unavailable guide,
 or regional restriction is not by itself a Crow-Flix security vulnerability.
 
+Optional whole-catalogue stream-health data is treated as untrusted. CrowFlix
+accepts it only when its manifest and individual checks are fresh, its bounded
+compressed and decompressed payloads validate, and each record matches an
+existing IPTV-org URL, Referer, and User-Agent exactly. Health data can change
+ordering or hide a recently failed source; it cannot introduce a new playback
+URL, override a successful local preflight, or bypass a provider restriction.
+
 Live guide retrieval is protected by Cloudflare Turnstile with server-side
 Siteverify validation. Report any apparent token replay, hostname/action
 validation bypass, leaked widget secret, or way to invoke protected guide work

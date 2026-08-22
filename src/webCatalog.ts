@@ -8,8 +8,17 @@
 // - Caching uses the Cache API (12 h read-through, stale-on-failure) instead
 //   of the Tauri app-data cache file.
 
-import type { StreamSource, TransportHint } from "./playback/types";
+import type {
+  CatalogSourceHealth,
+  StreamSource,
+  TransportHint,
+} from "./playback/types";
 import { RELAY_BASE } from "./relayClient";
+import {
+  isFreshCatalogHealth,
+  loadStreamHealthIndex,
+  streamSourceHealthIdentity,
+} from "./streamHealthIndex";
 
 export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v2";
 export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v2";
@@ -218,7 +227,7 @@ function sourceAvailability(label?: string | null): SourceAvailability {
   return "normal";
 }
 
-function sourcePreferenceScore(source: StreamSource): number {
+function sourcePreferenceScore(source: StreamSource, now = Date.now()): number {
   const transportScore = source.transport === "hls" ? 400
     : source.transport === "direct" ? 300
       : source.transport === "dash" ? 100 : 200;
@@ -226,7 +235,11 @@ function sourcePreferenceScore(source: StreamSource): number {
   const qualityScore = Math.min(Math.floor(qualityHeight(source.quality) / 60), 72);
   const availabilityScore = sourceAvailability(source.label) === "normal" ? 2_000
     : sourceAvailability(source.label) === "part-time" ? 1_000 : 0;
-  return availabilityScore + transportScore + httpsScore + qualityScore;
+  const healthScore = !isFreshCatalogHealth(source.catalogHealth, now) ? 20_000
+    : source.catalogHealth.status === "online" ? 30_000 + source.catalogHealth.score * 10
+      : source.catalogHealth.status === "blocked" ? 18_000
+        : source.catalogHealth.status === "timeout" ? 5_000 : 0;
+  return healthScore + availabilityScore + transportScore + httpsScore + qualityScore;
 }
 
 function sourceId(url: string, userAgent?: string | null, referrer?: string | null): string {
@@ -326,6 +339,47 @@ function sortAndSyncSources(channel: WebChannel): void {
     channel.quality = first.quality;
     channel.label = first.label;
   }
+}
+
+export function applyStreamHealthHints(
+  channels: WebChannel[],
+  hints: Map<string, CatalogSourceHealth>,
+  now = Date.now(),
+): number {
+  let matched = 0;
+  for (const channel of channels) {
+    for (const source of channel.sources) {
+      const hint = hints.get(streamSourceHealthIdentity(source));
+      if (isFreshCatalogHealth(hint, now)) {
+        source.catalogHealth = hint;
+        matched += 1;
+      } else {
+        delete source.catalogHealth;
+      }
+      source.preferenceScore = sourcePreferenceScore(source, now);
+    }
+    sortAndSyncSources(channel);
+  }
+  return matched;
+}
+
+function refreshSourceOrdering(channels: WebChannel[]): number {
+  let freshHints = 0;
+  for (const channel of channels) {
+    for (const source of channel.sources) {
+      if (isFreshCatalogHealth(source.catalogHealth)) freshHints += 1;
+      else delete source.catalogHealth;
+      source.preferenceScore = sourcePreferenceScore(source);
+    }
+    sortAndSyncSources(channel);
+  }
+  return freshHints;
+}
+
+function refreshedCatalogSource(source: string, freshHints: number): string {
+  return freshHints > 0
+    ? source
+    : source.replace(" + recent source health", "");
 }
 
 function mergeUnique(values: string[], candidates: string[]): void {
@@ -934,7 +988,11 @@ async function fetchJson<T>(name: string): Promise<T> {
 export async function loadWebCatalog(force = false): Promise<WebCatalog> {
   const cached = await readCache();
   if (!force && cached && Date.now() - cached.cachedAt < WEB_CATALOG_TTL_MS) {
-    return { ...cached.catalog, source: `${cached.catalog.source} · browser cache` };
+    const freshHints = refreshSourceOrdering(cached.catalog.channels);
+    return {
+      ...cached.catalog,
+      source: `${refreshedCatalogSource(cached.catalog.source, freshHints)} · browser cache`,
+    };
   }
   try {
     const requiredCatalog = Promise.all([
@@ -951,20 +1009,30 @@ export async function loadWebCatalog(force = false): Promise<WebCatalog> {
     const [
       [channels, feeds, logos, streams, categories, languages, countries, regions, blocklist],
       optionalFastFallbacks,
+      streamHealth,
     ] = await Promise.all([
       requiredCatalog,
       loadOptionalFastFallbacks().catch(() => []),
+      loadStreamHealthIndex().catch(() => null),
     ]);
     const catalog = buildCatalogFromApi(
       { channels, feeds, logos, streams, categories, languages, countries, regions, blocklist },
       new Date(),
       optionalFastFallbacks,
     );
+    const matchedHealth = streamHealth
+      ? applyStreamHealthHints(catalog.channels, streamHealth.hints)
+      : 0;
+    if (matchedHealth > 0) catalog.source += " + recent source health";
     void writeCache(catalog);
     return catalog;
   } catch (error) {
     if (cached) {
-      return { ...cached.catalog, source: `${cached.catalog.source} · offline cache` };
+      const freshHints = refreshSourceOrdering(cached.catalog.channels);
+      return {
+        ...cached.catalog,
+        source: `${refreshedCatalogSource(cached.catalog.source, freshHints)} · offline cache`,
+      };
     }
     throw error instanceof Error ? error : new Error(String(error));
   }

@@ -3,6 +3,7 @@ import {
   isFreshPreflight,
   type SourcePreflight,
 } from "./preflight";
+import { isFreshCatalogHealth } from "../streamHealthIndex";
 
 export const VERIFIED_AVAILABILITY_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -55,6 +56,12 @@ function expectedBrowserRouteKeys(source: StreamSource): string[] {
     : [`${base}:direct`, `${base}:relay`];
 }
 
+function catalogSaysOffline(source: StreamSource, now: number): boolean {
+  const health = source.catalogHealth;
+  return isFreshCatalogHealth(health, now)
+    && (health.status === "offline" || health.status === "timeout" || health.status === "error");
+}
+
 export function channelAvailability(
   channel: ChannelLike,
   health: Record<string, SourceHealth> = {},
@@ -96,6 +103,7 @@ export function channelAvailability(
   if (
     channel.sources.length > 0
     && channel.sources.every((source) => {
+      if (catalogSaysOffline(source, now)) return true;
       return expectedBrowserRouteKeys(source).every((key) => {
         const preflight = preflights[key];
         if (isFreshPreflight(preflight, now)) {
@@ -137,7 +145,14 @@ export function channelReliabilityScore(
   const httpsSources = channel.sources.filter(
     (source) => source.url.toLowerCase().startsWith("https://"),
   ).length;
+  const catalogHealthScore = channel.sources.reduce((maximum, source) => {
+    const health = source.catalogHealth;
+    return isFreshCatalogHealth(health, now) && health.status === "online"
+      ? Math.max(maximum, Math.round(health.score * 90))
+      : maximum;
+  }, 0);
   return availabilityScore
+    + catalogHealthScore
     + Math.min(channel.sources.length, 10) * 100
     + normalSources * 25
     + httpsSources * 5;

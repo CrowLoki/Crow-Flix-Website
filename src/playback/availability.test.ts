@@ -100,6 +100,34 @@ describe("channel availability", () => {
     })).toBe("temporarily-offline");
   });
 
+  it("hides sources that a fresh whole-catalogue scan found dead without treating blocked sources as dead", () => {
+    const now = 100_000;
+    const failed = {
+      ...source("https://example.test/failed.m3u8"),
+      catalogHealth: { status: "offline" as const, score: 0, checkedAt: now - 1 },
+    };
+    const blocked = {
+      ...source("https://example.test/blocked.m3u8"),
+      catalogHealth: { status: "blocked" as const, score: 70, checkedAt: now - 1 },
+    };
+    expect(channelAvailability({ sources: [failed] }, {}, now))
+      .toBe("temporarily-offline");
+    expect(channelAvailability({ sources: [blocked] }, {}, now))
+      .toBe("unverified");
+  });
+
+  it("ranks fresh upstream-online evidence above an otherwise equal unverified channel", () => {
+    const now = 100_000;
+    const online = {
+      ...source("https://example.test/online.m3u8"),
+      catalogHealth: { status: "online" as const, score: 95, checkedAt: now - 1 },
+    };
+    expect(channelReliabilityScore({ sources: [online] }, {}, now))
+      .toBeGreaterThan(channelReliabilityScore({
+        sources: [source("https://example.test/unknown.m3u8")],
+      }, {}, now));
+  });
+
   it("recognises negated geo labels as ordinary sources", () => {
     expect(channelAvailability({
       sources: [source("https://example.test/live.m3u8", "Non geo-blocked")],
