@@ -218,9 +218,10 @@ export function createTauriHlsLoader(
             }
           }
         }
-        if (typeof data === "string" || data instanceof ArrayBuffer) {
-          this.callbacks?.onProgress?.(this.stats, context, data, response);
-        }
+        // This loader returns one complete, bounded response through
+        // onSuccess. Sending the same bytes through onProgress first makes
+        // hls.js treat encrypted fragments as progressive input and can leave
+        // their completed response waiting forever for a playable buffer.
         this.finishRequest();
         this.callbacks?.onSuccess(
           { url: response.url || context.url, data, code: response.status },

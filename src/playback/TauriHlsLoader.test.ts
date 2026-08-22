@@ -98,6 +98,7 @@ describe("Tauri HLS loader", () => {
     ));
     const Loader = createTauriHlsLoader(relaySource!, fetcher);
     const loader = new Loader({} as HlsConfig);
+    const onProgress = vi.fn();
 
     await new Promise<void>((resolve, reject) => {
       loader.load({
@@ -107,12 +108,14 @@ describe("Tauri HLS loader", () => {
         type: "fragment" as LoaderContext["type"],
       }, config, {
         onSuccess: () => resolve(),
+        onProgress,
         onError: (error) => reject(new Error(error.text)),
         onTimeout: () => reject(new Error("timed out")),
       });
     });
 
     expect(fetcher).toHaveBeenCalledOnce();
+    expect(onProgress).not.toHaveBeenCalled();
     expect(fetcher).toHaveBeenCalledWith(
       relayChild,
       relaySource,
