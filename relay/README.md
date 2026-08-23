@@ -49,12 +49,13 @@ app at the deployed origin (e.g. `https://crowflix-relay.<you>.workers.dev`).
 All responses include `Access-Control-Allow-Origin: *` and preflight
 (`OPTIONS`) is answered. All failures return `{"error": "..."}` JSON with a
 4xx/5xx status and CORS headers — the client never sees an opaque block.
-Only `GET` is accepted.
+Public data/media routes accept `GET`; `/epg` accepts bounded `POST` requests
+and retains its legacy query-string `GET` form for compatibility.
 
 ### `GET /health`
 
 ```json
-{ "ok": true, "service": "crowflix-relay", "version": "0.1.0" }
+{ "ok": true, "service": "crowflix-relay", "version": "0.2.0" }
 ```
 
 ### `POST /epg`
@@ -73,15 +74,23 @@ Pipeline (mirrors `load_auto_epg` in `src-tauri/src/lib.rs` lines 2180-2237):
 2. Rank guide source URLs by how many requested channel ids each covers
    (same `source_coverage` counting; stable descending sort).
 3. Try up to **3** ranked sources (the Rust core tries 8; the Worker has
-   tighter CPU budgets, so fewer attempts). First source yielding at least
-   one matching programme wins.
-4. For recognised Australian browser timezones, try the matching bounded
+   tighter CPU budgets, so fewer attempts). Complementary sources are merged;
+   equivalent mirrors are skipped once all of their mapped channels have
+   already matched.
+4. For recognised Australian browser timezones, fill still-unmatched channels
+   from the matching bounded
    `i.mjh.nz/au/{City}/epg.xml.gz` guide and remap its provider ids to exact
    current CrowFlix channel ids.
-5. Fallback: `epg_ripper_{CC}1.xml.gz` from `epgshare01.online` then the
-   `raw.githubusercontent.com/epgshare01` mirror, where `CC` is the `country`
-   param uppercased with `GB → UK` aliasing.
+5. Fill remaining channels from `epg_ripper_{TAG}.xml.gz` at
+   `epgshare01.online`, then its `raw.githubusercontent.com/epgshare01` mirror,
+   where the provider tag is derived from the uppercased country with `GB → UK`
+   aliasing and current numbered exceptions such as `US2`, `CA2`, and `BE2`.
 6. Nothing matched → `502 {"error": "No current programme listings matched the CC channels."}`.
+
+Programmes are deduplicated by channel/start/stop across layers and the final
+combined response remains capped at 50,000 entries. A tiny worldwide guide can
+therefore enrich a country guide without preventing the much broader regional
+match from running.
 
 XMLTV handling: gzip is detected by magic bytes (`1f 8b`) and inflated with
 `DecompressionStream("gzip")` (when upstream sets `Content-Encoding: gzip`
@@ -107,8 +116,8 @@ is returned as `description`):
       "stop": "2026-08-16T13:00:00.000Z"
     }
   ],
-  "source": "IPTV-org EPG · https://.../guide.xml",
-  "matchedChannels": 1,
+  "source": "IPTV-org EPG · https://.../guide.xml + Automatic regional guide · US",
+  "matchedChannels": 167,
   "updatedAt": "2026-08-16T05:00:00.000Z"
 }
 ```
@@ -166,6 +175,7 @@ multipart and malformed ranges are rejected.
 | Channel ids per `/epg` request           | 2,000   |
 | Ranked guide sources tried               | 3       |
 | Kept programmes per parse                | 50,000  |
+| Kept programmes after combining layers   | 50,000  |
 | Decompressed XMLTV per source            | 96 MiB  |
 | guides.json index                        | 32 MiB streamed |
 | `/fetch` response                        | 32 MiB  |

@@ -12,7 +12,7 @@ import {
   type TurnstileEnvironment,
 } from "./turnstile";
 
-const SERVICE_VERSION = "0.1.0";
+const SERVICE_VERSION = "0.2.0";
 
 /** /fetch response cap (spec: 32 MiB, streamed-bounded). */
 const FETCH_MAX_BYTES = 32 * 1024 * 1024;
@@ -26,7 +26,7 @@ const MAX_UA_LENGTH = 512;
 const MAX_REFERER_LENGTH = 2_048;
 const MAX_RANGE_LENGTH = 64;
 
-const RELAY_UA = "crowflix-relay/0.1.0";
+const RELAY_UA = "crowflix-relay/0.2.0";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",

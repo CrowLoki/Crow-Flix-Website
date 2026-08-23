@@ -123,8 +123,10 @@ unchallenged. Crow-Flix has no payment or Stripe integration.
 
 After verification, the relay uses full IPTV-org guide mappings first, then a
 timezone-specific Australian regional guide when applicable, followed by the
-larger country fallback. XMLTV is decompressed and parsed as a bounded stream;
-only programmes matching requested channels are retained in memory.
+larger country fallback. Complementary results are combined and deduplicated;
+a small worldwide match no longer prevents still-unmatched channels from being
+filled by the regional layers. XMLTV is decompressed and parsed as a bounded
+stream; only programmes matching requested channels are retained in memory.
 Guide requests use bounded POST bodies rather than placing large country
 catalogues in a URL. Authoritative and alternate channel names are used only
 for exact, unambiguous XMLTV display-name matching.
