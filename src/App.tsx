@@ -78,23 +78,10 @@ import {
 } from "./playback/usePlaybackController";
 import { sourceIdentifier, type SourceHealth, type StreamSource } from "./playback/types";
 import {
-  browserPreflightRoutes,
-  isFreshPreflight,
-  preflightSource,
   readSourcePreflights,
-  recordSourcePreflight,
-  runPreflightQueue,
   SOURCE_PREFLIGHT_CHANGED_EVENT,
-  SOURCE_PREFLIGHT_TTL_MS,
   type SourcePreflight,
 } from "./playback/preflight";
-import {
-  LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT,
-  OTHER_VIEW_PREFLIGHT_CHANNEL_LIMIT,
-  boundedPreflightKeys,
-  findReadyRoute,
-  preflightSourceLimit,
-} from "./playback/preflightWindow";
 import {
   availabilityLabel,
   availabilityRank,
@@ -474,13 +461,6 @@ export default function App() {
   const [sourcePreflights, setSourcePreflights] = useState<Record<string, SourcePreflight>>(
     () => readSourcePreflights(),
   );
-  const [livePageKeys, setLivePageKeys] = useState<string[]>([]);
-  const updateLivePageKeys = useCallback((keys: string[]) => {
-    setLivePageKeys((current) =>
-      current.length === keys.length && current.every((key, index) => key === keys[index])
-        ? current
-        : keys);
-  }, []);
   useEffect(() => {
     const refreshHealth = () => setPlaybackHealth(readPlaybackHealth());
     window.addEventListener(SOURCE_HEALTH_CHANGED_EVENT, refreshHealth);
@@ -952,107 +932,6 @@ export default function App() {
   const heroNow = hero ? currentProgramme(programmes, hero.id, clock) : undefined;
   const heroNext = hero ? nextProgramme(programmes, hero.id, clock) : undefined;
 
-  const liveNavigationKey = [
-    catalog.updatedAt,
-    query,
-    category,
-    country,
-    language,
-    region,
-    subdivision,
-    city,
-    timezone,
-    owner,
-    network,
-    feed,
-    provider,
-  ].join("\u0001");
-
-  const preflightChannels = useMemo(() => {
-    if (isDesktop || catalog.source.includes("preview")) return [];
-    let candidates: Channel[];
-    if (playing) candidates = [playing];
-    else if (view === "live") {
-      const keys = boundedPreflightKeys(
-        livePageKeys,
-        filteredChannels.map((channel) => channel.key),
-        LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT,
-      );
-      candidates = keys
-        .map((key) => catalog.channels.find((channel) => channel.key === key))
-        .filter((channel): channel is Channel => Boolean(channel));
-    }
-    else if (view === "favourites") candidates = favouriteChannels;
-    else if (view === "guide") {
-      candidates = rankedCatalogChannels.filter((channel) =>
-        channelMatchesCountry(channel, guideCountry, catalog.regions));
-    } else if (view === "home") candidates = rankedCatalogChannels;
-    else candidates = [];
-    const limit = view === "live" && !playing
-      ? LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT
-      : OTHER_VIEW_PREFLIGHT_CHANNEL_LIMIT;
-    return [...new Map(candidates.map((channel) => [channel.key, channel])).values()]
-      .slice(0, limit);
-  }, [catalog.channels, catalog.regions, catalog.source, favouriteChannels, filteredChannels, guideCountry, isDesktop, livePageKeys, playing, rankedCatalogChannels, view]);
-  const preflightGroups = useMemo(() => preflightChannels.map((channel) => ({
-    channelKey: channel.key,
-    routes: browserPreflightRoutes(
-      channelSources(channel),
-      preflightSourceLimit(playing?.key === channel.key, view === "live"),
-      healthNow,
-    ),
-  })).filter((group) => group.routes.length > 0),
-  [healthNow, playing?.key, preflightChannels, view]);
-  const preflightWindow = Math.floor(healthNow / SOURCE_PREFLIGHT_TTL_MS);
-  const preflightTriggerKey = [
-    catalog.updatedAt,
-    catalog.source,
-    catalog.channels.length,
-    view,
-    query,
-    category,
-    country,
-    language,
-    region,
-    subdivision,
-    city,
-    timezone,
-    owner,
-    network,
-    feed,
-    provider,
-    livePageKeys.join("\u0000"),
-    guideCountry,
-    view === "favourites" ? favourites.join("\u0000") : "",
-    playing?.key || "",
-    preflightWindow,
-  ].join("\u0001");
-  useEffect(() => {
-    if (isDesktop || !preflightGroups.length) return undefined;
-    const controller = new AbortController();
-    void runPreflightQueue(preflightGroups, 3, async (group) => {
-      await findReadyRoute(
-        group.routes,
-        (source) => {
-          const current = readSourcePreflights()[sourceIdentifier(source)];
-          return isFreshPreflight(current) ? current.status : null;
-        },
-        async (source) => {
-          try {
-            const result = await preflightSource(source, undefined, controller.signal);
-            if (!controller.signal.aborted) recordSourcePreflight(source, result);
-            return result.status;
-          } catch {
-            // Navigation aborts are expected; route failures are returned as data.
-            return "offline";
-          }
-        },
-        controller.signal,
-      );
-    }, controller.signal);
-    return () => controller.abort();
-  }, [isDesktop, preflightTriggerKey]); // A stable user/catalog key prevents cache writes from restarting the queue.
-
   const zapKeys = useMemo(
     () => (filteredChannels.length ? filteredChannels : catalog.channels).map((channel) => channel.key),
     [filteredChannels, catalog.channels],
@@ -1138,7 +1017,7 @@ export default function App() {
       {catalogError && <CatalogErrorBanner message={catalogError} hasCatalog={catalog.channels.length > 0} loading={loading} onRetry={() => void loadCatalog(catalog.channels.length > 0)} />}
       <main>
         {view === "home" && <HomeView channels={rankedCatalogChannels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onGuide={() => setView("guide")} onInfo={setDetailsChannel} />}
-        {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} navigationKey={liveNavigationKey} onPageChannels={updateLivePageKeys} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} subdivision={subdivision} setSubdivision={setSubdivision} city={city} setCity={setCity} timezone={timezone} setTimezone={setTimezone} owner={owner} setOwner={setOwner} network={network} setNetwork={setNetwork} feed={feed} setFeed={setFeed} provider={provider} setProvider={setProvider} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} />}
+        {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} subdivision={subdivision} setSubdivision={setSubdivision} city={city} setCity={setCity} timezone={timezone} setTimezone={setTimezone} owner={owner} setOwner={setOwner} network={network} setNetwork={setNetwork} feed={feed} setFeed={setFeed} provider={provider} setProvider={setProvider} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} />}
         {view === "guide" && <GuideView catalog={catalog} country={guideCountry} setCountry={setGuideCountry} programmes={programmes} clock={clock} status={guideStatus} loading={guideLoading} requiresVerification={!isDesktop && guideNeedsVerification} verificationError={guideVerificationError} onVerified={(token) => void loadGuide(guideCountry, true, token)} onVerificationError={(message) => { setGuideVerificationError(message || null); if (message) setGuideStatus(message); }} onRefresh={() => void loadGuide(guideCountry, true)} onPlay={play} />}
         {view === "web" && <WebDestinationsView items={webDestinations} query={query} onOpen={(item) => void openWebsite(item.url, item.title)} onSave={saveWebDestination} onDelete={deleteWebDestination} onImport={importWebDestinations} onMessage={showToast} />}
         {view === "favourites" && <FavouritesView channels={favouriteChannels} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} onBrowse={() => setView("live")} />}
@@ -1233,8 +1112,6 @@ function ChannelCard({ channel, programme, favourite, onPlay, onFavourite, onInf
 type LiveViewProps = {
   catalog: Catalog; channels: Channel[]; mode: BrowseMode;
   setMode: (mode: BrowseMode) => void;
-  navigationKey: string;
-  onPageChannels: (keys: string[]) => void;
   category: string; setCategory: (value: string) => void;
   country: string; setCountry: (value: string) => void;
   language: string; setLanguage: (value: string) => void;
@@ -1252,7 +1129,7 @@ type LiveViewProps = {
   onInfo: (channel: Channel) => void;
 };
 
-function LiveView({ catalog, channels, mode, setMode, navigationKey, onPageChannels, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, subdivision, setSubdivision, city, setCity, timezone, setTimezone, owner, setOwner, network, setNetwork, feed, setFeed, provider, setProvider, favourites, programmes, clock, onPlay, onFavourite, onInfo }: LiveViewProps) {
+function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, subdivision, setSubdivision, city, setCity, timezone, setTimezone, owner, setOwner, network, setNetwork, feed, setFeed, provider, setProvider, favourites, programmes, clock, onPlay, onFavourite, onInfo }: LiveViewProps) {
   const [catalogOrder, setCatalogOrder] = useState<"ranked" | "alphabetical">("ranked");
   const [page, setPage] = useState(1);
   const visibleChannels = useMemo(() => catalogOrder === "ranked"
@@ -1267,12 +1144,6 @@ function LiveView({ catalog, channels, mode, setMode, navigationKey, onPageChann
   );
   const matchingSources = visibleChannels.reduce((total, channel) => total + channelSources(channel).length, 0);
   useEffect(() => setPage(1), [catalogOrder, category, city, country, feed, language, network, owner, provider, region, subdivision, timezone, visibleChannels.length]);
-  useEffect(() => {
-    onPageChannels(pageChannels.map((channel) => channel.key));
-    return () => onPageChannels([]);
-    // Page membership deliberately follows user navigation, not health writes
-    // that can reorder the ranked catalogue while the bounded queue runs.
-  }, [catalogOrder, navigationKey, onPageChannels, safePage]); // eslint-disable-line react-hooks/exhaustive-deps
   const optionsByMode: Record<BrowseMode, NamedOption[]> = {
     categories: catalog.categories,
     countries: catalog.countries.map((item) => ({ id: item.code, name: `${item.flag} ${item.name}`, count: item.count })),

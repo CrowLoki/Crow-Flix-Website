@@ -43,7 +43,6 @@ for (const file of [
   "src/TurnstileGuideGate.tsx",
   "src/playback/usePlaybackController.ts",
   "scripts/headless-acceptance.mjs",
-  "src/playback/preflightWindow.ts",
   "relay/src/index.ts",
   "relay/src/turnstile.ts",
   "RECOVERY-PROVENANCE.json",
@@ -92,18 +91,11 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
-
-const sourcePreflight = await readFile(path.join(repositoryRoot, "src", "playback", "preflight.ts"), "utf8");
-for (const value of ["browserPreflightRoutes", "runPreflightQueue", "verifyHlsMedia", "verifyDashMedia"]) {
-  assert(sourcePreflight.includes(value), `Source readiness routing is missing: ${value}`);
-}
-
-const preflightWindow = await readFile(path.join(repositoryRoot, "src", "playback", "preflightWindow.ts"), "utf8");
-for (const value of ["LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT", "LIVE_CARD_PREFLIGHT_SOURCE_LIMIT", "boundedPreflightKeys", "preflightSourceLimit", "findReadyRoute"]) {
-  assert(preflightWindow.includes(value), `Visible-page readiness routing is missing: ${value}`);
+for (const value of ["runPreflightQueue(", "preflightSource(", "browserPreflightRoutes("]) {
+  assert(!app.includes(value), `The browser app still probes channel sources before the viewer selects one: ${value}`);
 }
 
 const playbackController = await readFile(path.join(repositoryRoot, "src", "playback", "usePlaybackController.ts"), "utf8");
