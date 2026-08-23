@@ -150,8 +150,15 @@ try {
     cards: document.querySelectorAll('.channel-card').length,
     addSource: Boolean(document.querySelector('.source-button')),
     liveNav: [...document.querySelectorAll('.topbar nav button')].some((button) => button.textContent.includes('Live TV')),
-    audienceFirst: document.body.innerText.includes('Australia in English') && document.body.innerText.includes('American TV & Movies'),
-    smallCursor: getComputedStyle(document.documentElement).cursor.includes('/cursors/16/normal.png'),
+    audienceFirst: document.body.innerText.includes('Australian entertainment') && document.body.innerText.includes('American TV & Movies'),
+    entertainmentFirst: (() => {
+      const home = document.querySelector('.home-content')?.innerText || '';
+      return home.includes('Movies to watch')
+        && home.includes('TV shows & entertainment')
+        && !home.includes('Live news')
+        && !home.includes('Live sports');
+    })(),
+    halfSizeClawCursor: getComputedStyle(document.documentElement).cursor.includes('/cursors/32/normal.png'),
     desktopDownload: document.body.innerText.includes('Download Crow-Flix for Windows'),
     status: document.querySelector('.status-bar')?.innerText || ''
   })`);
@@ -243,7 +250,7 @@ try {
   const playerStayedOpen = await evaluate("Boolean(document.querySelector('.player'))");
 
   const assertions = {
-    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.smallCursor && !home.desktopDownload,
+    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.halfSizeClawCursor && !home.desktopDownload,
     fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy && live.preferredOrder,
     noBackgroundStreamProbing: backgroundStreamRequests.length === 0,
     detailsDialog: details.channelId && details.sources && details.providers,

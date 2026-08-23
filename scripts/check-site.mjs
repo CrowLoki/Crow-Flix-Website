@@ -99,8 +99,8 @@ for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "av
 }
 
 const appCss = await readFile(path.join(repositoryRoot, "src", "App.css"), "utf8");
-assert(appCss.includes('/cursors/16/normal.png'), "CrowFlix still uses the full-size normal cursor asset");
-assert(!appCss.includes('/cursors/32/normal.png'), "CrowFlix still references the full-size normal cursor asset");
+assert(appCss.includes('/cursors/32/normal.png'), "CrowFlix does not use the half-size claw cursor artwork");
+assert(!appCss.includes('/cursors/normal.cur'), "CrowFlix still references the oversized cursor file");
 for (const value of ["runPreflightQueue(", "preflightSource(", "browserPreflightRoutes("]) {
   assert(!app.includes(value), `The browser app still probes channel sources before the viewer selects one: ${value}`);
 }
