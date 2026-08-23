@@ -139,6 +139,59 @@ type BrowseMode =
 
 const PlaybackAvailabilityContext = createContext<Record<string, ChannelAvailability>>({});
 
+const CROWFLIX_HISTORY_KEY = "crowflix-navigation-v1";
+
+type CrowFlixNavigationState = {
+  view: View;
+  playingKey: string | null;
+  detailsKey: string | null;
+  sourceOpen: boolean;
+  browseMode: BrowseMode;
+  category: string;
+  country: string;
+  language: string;
+  region: string;
+  subdivision: string;
+  city: string;
+  timezone: string;
+  owner: string;
+  network: string;
+  feed: string;
+  provider: string;
+  guideCountry: string;
+};
+
+function readCrowFlixNavigationState(value: unknown): CrowFlixNavigationState | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record[CROWFLIX_HISTORY_KEY] !== true) return null;
+  const view = record.view;
+  if (!(["home", "live", "guide", "web", "favourites", "about"] as const).includes(view as View)) return null;
+  const text = (key: string) => typeof record[key] === "string" ? record[key] : "";
+  const nullableText = (key: string) => typeof record[key] === "string" ? record[key] : null;
+  const browseMode = record.browseMode;
+  if (!(["categories", "countries", "languages", "regions", "subdivisions", "cities", "timezones", "owners", "networks", "feeds", "providers"] as const).includes(browseMode as BrowseMode)) return null;
+  return {
+    view: view as View,
+    playingKey: nullableText("playingKey"),
+    detailsKey: nullableText("detailsKey"),
+    sourceOpen: record.sourceOpen === true,
+    browseMode: browseMode as BrowseMode,
+    category: text("category") || "all",
+    country: text("country") || "all",
+    language: text("language") || "all",
+    region: text("region") || "all",
+    subdivision: text("subdivision") || "all",
+    city: text("city") || "all",
+    timezone: text("timezone") || "all",
+    owner: text("owner") || "all",
+    network: text("network") || "all",
+    feed: text("feed") || "all",
+    provider: text("provider") || "all",
+    guideCountry: text("guideCountry") || DEFAULT_GUIDE_COUNTRY,
+  };
+}
+
 type Channel = {
   key: string;
   id: string;
@@ -468,6 +521,12 @@ export default function App() {
   const [sourcePreflights, setSourcePreflights] = useState<Record<string, SourcePreflight>>(
     () => readSourcePreflights(),
   );
+  const catalogRef = useRef<Catalog>(emptyCatalog);
+  const historyInstalled = useRef(false);
+  const applyingHistory = useRef(false);
+  const lastHistorySnapshot = useRef("");
+  const navigationStateRef = useRef<CrowFlixNavigationState | null>(null);
+  useEffect(() => { catalogRef.current = catalog; }, [catalog]);
   useEffect(() => {
     const refreshHealth = () => setPlaybackHealth(readPlaybackHealth());
     window.addEventListener(SOURCE_HEALTH_CHANGED_EVENT, refreshHealth);
@@ -488,6 +547,82 @@ export default function App() {
       window.clearTimeout(refreshTimer);
     };
   }, []);
+  const navigationState = useMemo<CrowFlixNavigationState>(() => ({
+    view,
+    playingKey: playing?.key || null,
+    detailsKey: detailsChannel?.key || null,
+    sourceOpen,
+    browseMode,
+    category,
+    country,
+    language,
+    region,
+    subdivision,
+    city,
+    timezone,
+    owner,
+    network,
+    feed,
+    provider,
+    guideCountry,
+  }), [browseMode, category, city, country, detailsChannel?.key, feed, guideCountry, language, network, owner, playing?.key, provider, region, sourceOpen, subdivision, timezone, view]);
+  useEffect(() => { navigationStateRef.current = navigationState; }, [navigationState]);
+  const applyNavigationState = useCallback((next: CrowFlixNavigationState) => {
+    const resolveChannel = (key: string | null) => key
+      ? catalogRef.current.channels.find((channel) => channel.key === key) || null
+      : null;
+    applyingHistory.current = true;
+    setView(next.view);
+    setPlaying(resolveChannel(next.playingKey));
+    setDetailsChannel(resolveChannel(next.detailsKey));
+    setSourceOpen(next.sourceOpen);
+    setBrowseMode(next.browseMode);
+    setCategory(next.category);
+    setCountry(next.country);
+    setLanguage(next.language);
+    setRegion(next.region);
+    setSubdivision(next.subdivision);
+    setCity(next.city);
+    setTimezone(next.timezone);
+    setOwner(next.owner);
+    setNetwork(next.network);
+    setFeed(next.feed);
+    setProvider(next.provider);
+    setGuideCountry(next.guideCountry);
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
+  useEffect(() => {
+    if (isDesktop || historyInstalled.current) return;
+    historyInstalled.current = true;
+    const restored = readCrowFlixNavigationState(window.history.state);
+    if (restored) applyNavigationState(restored);
+    else {
+      const initialState = navigationStateRef.current || navigationState;
+      const initial = { [CROWFLIX_HISTORY_KEY]: true, ...initialState };
+      window.history.replaceState(initial, "", window.location.href);
+      lastHistorySnapshot.current = JSON.stringify(initialState);
+    }
+    const onPopState = (event: PopStateEvent) => {
+      const state = readCrowFlixNavigationState(event.state);
+      if (!state) return;
+      lastHistorySnapshot.current = JSON.stringify(state);
+      applyNavigationState(state);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [applyNavigationState, isDesktop]);
+  useEffect(() => {
+    if (isDesktop || !historyInstalled.current) return;
+    const serialized = JSON.stringify(navigationState);
+    if (applyingHistory.current) {
+      applyingHistory.current = false;
+      lastHistorySnapshot.current = serialized;
+      return;
+    }
+    if (lastHistorySnapshot.current === serialized) return;
+    window.history.pushState({ [CROWFLIX_HISTORY_KEY]: true, ...navigationState }, "", window.location.href);
+    lastHistorySnapshot.current = serialized;
+  }, [isDesktop, navigationState]);
   const playbackTarget = useMemo(
     () => playing
       ? {

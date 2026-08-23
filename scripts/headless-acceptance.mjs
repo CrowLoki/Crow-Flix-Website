@@ -274,6 +274,14 @@ try {
   await waitFor("Boolean(document.querySelector('.player')) && !document.querySelector('.player-mini-guide')");
   await evaluate("document.querySelector('.player video')?.click()");
   const playerStayedOpen = await evaluate("Boolean(document.querySelector('.player'))");
+  await evaluate("history.back()");
+  await waitFor("!document.querySelector('.player') && document.querySelectorAll('.browse-results .channel-card').length === 48");
+  const browserHistory = await evaluate(`({
+    returnedToLive: !document.querySelector('.player') && document.querySelectorAll('.browse-results .channel-card').length === 48
+  })`);
+  await evaluate("history.forward()");
+  await waitFor("Boolean(document.querySelector('.player'))");
+  browserHistory.forwardRestoredPlayer = await evaluate("Boolean(document.querySelector('.player'))");
 
   const assertions = {
     homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.enlargedClawCursor && home.helper && !home.desktopDownload,
@@ -290,9 +298,10 @@ try {
     subtitleMenu: subtitleMenu.off && subtitleMenu.honestUnavailable,
     miniGuide: miniGuide.search && miniGuide.channels > 0 && miniGuide.previous && miniGuide.next,
     escapeClosesOverlayOnly: playerStayedOpen,
+    browserBackForward: browserHistory.returnedToLive && browserHistory.forwardRestoredPlayer,
   };
   if (Object.values(assertions).some((value) => !value)) {
-    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, helper, explore, live, backgroundStreamRequests, hoverPreview, details, sourceDialog, guideAudience, freeCollection, player, subtitleMenu, miniGuide })}`);
+    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, helper, explore, live, backgroundStreamRequests, hoverPreview, details, sourceDialog, guideAudience, freeCollection, player, subtitleMenu, miniGuide, browserHistory })}`);
   }
   console.log(JSON.stringify({
     ok: true,
