@@ -102,7 +102,7 @@ for (const value of ["browserPreflightRoutes", "runPreflightQueue", "verifyHlsMe
 }
 
 const preflightWindow = await readFile(path.join(repositoryRoot, "src", "playback", "preflightWindow.ts"), "utf8");
-for (const value of ["LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT", "LIVE_CARD_PREFLIGHT_ROUTE_LIMIT", "boundedPreflightKeys", "preflightRouteLimit"]) {
+for (const value of ["LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT", "LIVE_CARD_PREFLIGHT_SOURCE_LIMIT", "boundedPreflightKeys", "preflightSourceLimit", "findReadyRoute"]) {
   assert(preflightWindow.includes(value), `Visible-page readiness routing is missing: ${value}`);
 }
 

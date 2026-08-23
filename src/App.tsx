@@ -82,7 +82,8 @@ import {
   LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT,
   OTHER_VIEW_PREFLIGHT_CHANNEL_LIMIT,
   boundedPreflightKeys,
-  preflightRouteLimit,
+  findReadyRoute,
+  preflightSourceLimit,
 } from "./playback/preflightWindow";
 import {
   availabilityLabel,
@@ -983,12 +984,14 @@ export default function App() {
     return [...new Map(candidates.map((channel) => [channel.key, channel])).values()]
       .slice(0, limit);
   }, [catalog.channels, catalog.regions, catalog.source, favouriteChannels, filteredChannels, guideCountry, isDesktop, livePageKeys, playing, rankedCatalogChannels, view]);
-  const preflightTasks = useMemo(() => preflightChannels.flatMap((channel) =>
-    browserPreflightRoutes(
+  const preflightGroups = useMemo(() => preflightChannels.map((channel) => ({
+    channelKey: channel.key,
+    routes: browserPreflightRoutes(
       channelSources(channel),
-      preflightRouteLimit(playing?.key === channel.key, view === "live"),
+      preflightSourceLimit(playing?.key === channel.key, view === "live"),
       healthNow,
-    ).map((source) => ({ channelKey: channel.key, source }))),
+    ),
+  })).filter((group) => group.routes.length > 0),
   [healthNow, playing?.key, preflightChannels, view]);
   const preflightWindow = Math.floor(healthNow / SOURCE_PREFLIGHT_TTL_MS);
   const preflightTriggerKey = [
@@ -1015,32 +1018,27 @@ export default function App() {
     preflightWindow,
   ].join("\u0001");
   useEffect(() => {
-    if (isDesktop || !preflightTasks.length) return undefined;
+    if (isDesktop || !preflightGroups.length) return undefined;
     const controller = new AbortController();
-    const tasks = [...new Map(preflightTasks.map((task) => [
-      `${task.channelKey}\u0000${sourceIdentifier(task.source)}`,
-      task,
-    ])).values()];
-    const readyChannels = new Set<string>();
-    void runPreflightQueue(tasks, 3, async (task) => {
-      if (!controller.signal.aborted) {
-        if (readyChannels.has(task.channelKey)) return;
-        const source = task.source;
-        const current = readSourcePreflights()[sourceIdentifier(source)];
-        if (isFreshPreflight(current)) {
-          if (current.status === "ready") readyChannels.add(task.channelKey);
-          return;
-        }
-        try {
-          const result = await preflightSource(source, undefined, controller.signal);
-          if (!controller.signal.aborted) {
-            recordSourcePreflight(source, result);
-            if (result.status === "ready") readyChannels.add(task.channelKey);
+    void runPreflightQueue(preflightGroups, 3, async (group) => {
+      await findReadyRoute(
+        group.routes,
+        (source) => {
+          const current = readSourcePreflights()[sourceIdentifier(source)];
+          return isFreshPreflight(current) ? current.status : null;
+        },
+        async (source) => {
+          try {
+            const result = await preflightSource(source, undefined, controller.signal);
+            if (!controller.signal.aborted) recordSourcePreflight(source, result);
+            return result.status;
+          } catch {
+            // Navigation aborts are expected; route failures are returned as data.
+            return "offline";
           }
-        } catch {
-          // Navigation aborts are expected; route failures are returned as data.
-        }
-      }
+        },
+        controller.signal,
+      );
     }, controller.signal);
     return () => controller.abort();
   }, [isDesktop, preflightTriggerKey]); // A stable user/catalog key prevents cache writes from restarting the queue.
