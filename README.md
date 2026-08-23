@@ -123,6 +123,13 @@ with their public playlist provenance, headers, logo, broadcast area, and
 timezone. Failure of an optional playlist never replaces the base catalogue.
 Individually media-verified public fallbacks may also be attached to an exact
 channel ID with a clear feed label and provenance; the original sources remain.
+The catalogue also retains current SRT, RTMP, RTSP, and MMSH records instead of
+silently deleting their channels. An `EXTERNAL` badge identifies channels whose
+only published routes need a non-browser protocol. CrowFlix does not pretend to
+transcode them, but keeps their full metadata, source host, official website,
+and route details reachable. Where a legitimate HLS counterpart is found and
+media-verified—currently Advocate Broadcasting Network—the HLS route is added
+without removing the upstream source.
 
 Live programme-guide requests use Cloudflare Turnstile in Managed mode. The
 browser obtains a one-time `epg_load` token, and the relay validates it through

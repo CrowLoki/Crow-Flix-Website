@@ -553,6 +553,9 @@ export function browserPreflightRoutes(
   maximumSources: number,
   now = Date.now(),
 ): StreamSource[] {
+  const playableSources = sources.filter(
+    (source) => classifySource(source) !== "unsupported",
+  );
   const selected: StreamSource[] = [];
   const selectedIds = new Set<string>();
   const add = (source: StreamSource | undefined) => {
@@ -563,10 +566,10 @@ export function browserPreflightRoutes(
     selected.push(source);
   };
 
-  add(sources[0]);
-  add(sources.find((source) => source.url.toLowerCase().startsWith("https://")));
-  add(sources.find((source) => !isFreshCatalogHealth(source.catalogHealth, now)));
-  for (const source of sources) add(source);
+  add(playableSources[0]);
+  add(playableSources.find((source) => source.url.toLowerCase().startsWith("https://")));
+  add(playableSources.find((source) => !isFreshCatalogHealth(source.catalogHealth, now)));
+  for (const source of playableSources) add(source);
 
   const groups = selected.slice(0, Math.max(0, Math.floor(maximumSources)))
     .map(toWebPlayableSources);

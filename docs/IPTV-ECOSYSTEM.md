@@ -87,6 +87,13 @@ route per visible channel, at most three concurrent requests, cached for 15
 minutes. Changing pages changes the check window; health-driven reordering does
 not recursively chase through or shrink the catalogue.
 
+Current upstream SRT, RTMP, RTSP, and MMSH records are retained with an honest
+`EXTERNAL` availability state rather than discarded by the HTTP normalizer.
+They remain searchable and expose full metadata, host/protocol, and official
+website information. The verified Free-TV Advocate HLS feed is attached to its
+exact channel alongside the original SRT record; the other external-only
+channels remain intact until a legitimate browser route is media-verified.
+
 ## Programme guide pipeline
 
 Built-in guide retrieval is automatic and protected by Turnstile only at `/epg`:

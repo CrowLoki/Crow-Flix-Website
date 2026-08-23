@@ -51,13 +51,14 @@ import {
   channelMatchesMetadataFilters,
   channelProviders,
   sourceHostname,
+  sourceProtocol,
 } from "./catalogMetadata";
 import {
   assertImportFileSize,
   MAX_PLAYLIST_IMPORT_BYTES,
   MAX_XMLTV_IMPORT_BYTES,
 } from "./importLimits";
-import { migrateStoredChannelKeys } from "./playback/logic";
+import { classifySource, migrateStoredChannelKeys } from "./playback/logic";
 import {
   readPlaybackHealth,
   SOURCE_HEALTH_CHANGED_EVENT,
@@ -1456,7 +1457,7 @@ function ChannelDetails({ channel, now, next, favourite, onPlay, onFavourite, on
         <div><h3>Playback sources</h3><span>{sources.length.toLocaleString()} preserved routes before browser delivery fallbacks</span></div>
         {sources.map((source, index) => <article key={sourceIdentifier(source, index)}>
           <span><strong>{source.provenance || source.title || source.label || `Source ${index + 1}`}</strong><small>{sourceHostname(source)}</small></span>
-          <div>{source.quality && <b>{source.quality}</b>}<b>{(source.transport || source.transportHint || "unknown").toUpperCase()}</b><b>{source.url.startsWith("https://") ? "HTTPS" : "HTTP"}</b>{source.requiresHeaders && <b>Provider headers</b>}</div>
+          <div>{source.quality && <b>{source.quality}</b>}<b>{(source.transport || source.transportHint || "unknown").toUpperCase()}</b><b>{sourceProtocol(source)}</b>{source.requiresHeaders && <b>Provider headers</b>}</div>
         </article>)}
       </section>
       <div className="channel-details-actions">
@@ -1488,6 +1489,8 @@ function Player({
   onClose: () => void;
 }) {
   const source = playback.source;
+  const externalOnly = channelSources(channel).length > 0
+    && channelSources(channel).every((candidate) => classifySource(candidate) === "unsupported");
   const latestDiagnostic = playback.diagnostics[playback.diagnostics.length - 1];
   const busy = playback.status === "loading" || playback.status === "switching";
   const [chromeVisible, setChromeVisible] = useState(true);
@@ -1581,7 +1584,9 @@ function Player({
     </div>}
     {playback.status === "failed" && <div className="player-error">
       <WarningCircle weight="fill" />
-      <h2>{playback.sourceTotal === 0
+      <h2>{externalOnly
+        ? "This channel currently uses an external streaming protocol"
+        : playback.sourceTotal === 0
         ? "No live source is listed"
         : playback.sourceTotal === 1
           ? "This channel’s source could not play"
@@ -1590,6 +1595,7 @@ function Player({
       <div className="player-error-actions">
         <button onClick={playback.retry}><ArrowsClockwise /> Retry</button>
         {playback.canNext && <button onClick={playback.next}><CaretRight /> Next route</button>}
+        {channelWebsite && <button className="quiet" onClick={() => onOpenWebsite(channelWebsite, channel.name)}><ArrowSquareOut /> Channel website</button>}
         <button className="quiet" onClick={onClose}>Return</button>
       </div>
       {latestDiagnostic && <details className="player-diagnostics">

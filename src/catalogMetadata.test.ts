@@ -3,6 +3,7 @@ import {
   channelMatchesMetadataFilters,
   channelProviders,
   sourceHostname,
+  sourceProtocol,
 } from "./catalogMetadata";
 import { MAIN_FEED_OPTION_ID } from "./webCatalog";
 
@@ -48,5 +49,6 @@ describe("catalogue metadata filters", () => {
       url: "https://www.provider.test/private/live.m3u8?token=hidden",
     })).toBe("provider.test");
     expect(sourceHostname({ url: "not a url" })).toBe("Unknown host");
+    expect(sourceProtocol({ url: "rtmp://provider.test/live" })).toBe("RTMP");
   });
 });

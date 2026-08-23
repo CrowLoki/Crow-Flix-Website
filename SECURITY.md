@@ -47,3 +47,8 @@ Personal URL imports use the same SSRF-guarded, redirect-validating relay and a
 bounded browser reader. Only normal HTTP(S) media entries are accepted;
 embedded username/password URLs and non-web protocols are rejected. Personal
 imports are additive and cannot replace or suppress the built-in catalogue.
+
+The built-in catalogue can retain recognised SRT, RTMP, RTSP, and MMSH URLs as
+non-browser metadata. They are never sent through the HTTP relay or background
+readiness queue. Only separately validated HTTP(S) fallbacks enter browser
+delivery; credential-bearing and unknown schemes remain rejected.

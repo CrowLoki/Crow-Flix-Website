@@ -25,8 +25,8 @@ import {
   streamSourceHealthIdentity,
 } from "./streamHealthIndex";
 
-export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v4";
-export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v4";
+export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v5";
+export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v5";
 export const MAIN_FEED_OPTION_ID = "__main__";
 const WEB_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
 const API_BASE = "https://iptv-org.github.io/api";
@@ -53,6 +53,13 @@ export const VERIFIED_PUBLIC_FALLBACKS = [
     url: "https://tvbrasilinternacional-stream.ebc.com.br/index.m3u8",
     label: "International feed",
     provenance: "EBC public TV Brasil Internacional stream",
+  },
+  {
+    channelId: "AdvocateBroadcastingNetwork.ng",
+    title: "Advocate Broadcasting Network",
+    url: "https://viewmedia7219.bozztv.com/wmedia/viewmedia100/web_045/Stream/playlist.m3u8",
+    label: "Browser HLS fallback",
+    provenance: "Free-TV public Advocate feed · media verified 2026-08-23",
   },
 ] as const;
 
@@ -230,6 +237,32 @@ function normalizeHttpUrl(value: string): [string, boolean] | null {
   return [text, isHttps];
 }
 
+const EXTERNAL_PLAYER_PROTOCOLS = new Set([
+  "mmsh:",
+  "rtmp:",
+  "rtsp:",
+  "srt:",
+]);
+
+function normalizeStreamUrl(value: string): [string, boolean] | null {
+  const http = normalizeHttpUrl(value);
+  if (http) return http;
+  const text = trimWrappingQuotes(value);
+  if (!text || text.length > 8_192 || /[\p{Cc}\s]/u.test(text)) return null;
+  try {
+    const parsed = new URL(text);
+    if (
+      !EXTERNAL_PLAYER_PROTOCOLS.has(parsed.protocol.toLowerCase())
+      || !parsed.hostname
+      || parsed.username
+      || parsed.password
+    ) return null;
+    return [parsed.href, false];
+  } catch {
+    return null;
+  }
+}
+
 function normalizeReferrer(value?: string | null): string | null {
   const text = normalizePlainText(value, 2_048);
   if (!text || !/^[\x00-\x7F]*$/.test(text)) return null;
@@ -239,6 +272,12 @@ function normalizeReferrer(value?: string | null): string | null {
 
 function streamTransport(url: string): TransportHint {
   const lower = url.toLowerCase();
+  try {
+    const protocol = new URL(url).protocol.toLowerCase();
+    if (protocol !== "http:" && protocol !== "https:") return "unsupported";
+  } catch {
+    return "unsupported";
+  }
   const path = lower.split(/[?#]/, 1)[0];
   if (path.endsWith(".m3u8") || path.endsWith(".m3u")) return "hls";
   if (path.endsWith(".mpd")) return "dash";
@@ -286,8 +325,10 @@ function sourceAvailability(label?: string | null): SourceAvailability {
 function sourcePreferenceScore(source: StreamSource, now = Date.now()): number {
   const transportScore = source.transport === "hls" ? 400
     : source.transport === "direct" ? 300
-      : source.transport === "dash" ? 100 : 200;
-  const browserDeliveryScore = sourceUsesLiteralIp(source) ? 0
+      : source.transport === "dash" ? 100
+        : source.transport === "unsupported" ? -2_000 : 200;
+  const browserDeliveryScore = source.transport === "unsupported" ? 0
+    : sourceUsesLiteralIp(source) ? 0
     : source.isHttps ? 4_000 : 1_000;
   const qualityScore = Math.min(Math.floor(qualityHeight(source.quality) / 60), 72);
   const availabilityScore = sourceAvailability(source.label) === "normal" ? 2_000
@@ -314,7 +355,7 @@ function makeStreamSource(
   label?: string | null,
   provenance?: string | null,
 ): StreamSource | null {
-  const normalized = normalizeHttpUrl(url);
+  const normalized = normalizeStreamUrl(url);
   if (!normalized) return null;
   const [normalizedUrl, isHttps] = normalized;
   const source: StreamSource = {
