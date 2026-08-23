@@ -7,6 +7,7 @@ import {
   catalogHealthSupportsBrowserRanking,
   isFreshCatalogHealth,
 } from "../streamHealthIndex";
+import { classifySource } from "./logic";
 
 export const VERIFIED_AVAILABILITY_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -16,7 +17,8 @@ export type ChannelAvailability =
   | "unverified"
   | "part-time"
   | "region-limited"
-  | "temporarily-offline";
+  | "temporarily-offline"
+  | "unsupported";
 
 export type AvailabilitySummary = Record<ChannelAvailability, number>;
 
@@ -91,6 +93,13 @@ export function channelAvailability(
 
   if (
     channel.sources.length > 0
+    && channel.sources.every((source) => classifySource(source) === "unsupported")
+  ) {
+    return "unsupported";
+  }
+
+  if (
+    channel.sources.length > 0
     && channel.sources.every((source) => isRegionLimited(source))
   ) {
     return "region-limited";
@@ -131,6 +140,7 @@ export function availabilityRank(value: ChannelAvailability): number {
     case "part-time": return 3;
     case "region-limited": return 4;
     case "temporarily-offline": return 5;
+    case "unsupported": return 6;
   }
 }
 
@@ -141,7 +151,7 @@ export function channelReliabilityScore(
   preflights: Record<string, SourcePreflight> = {},
 ): number {
   const availability = channelAvailability(channel, health, now, preflights);
-  const availabilityScore = (5 - availabilityRank(availability)) * 10_000;
+  const availabilityScore = (6 - availabilityRank(availability)) * 10_000;
   const normalSources = channel.sources.filter(
     (source) => !isRegionLimited(source) && !isPartTime(source),
   ).length;
@@ -186,6 +196,7 @@ export function summarizeAvailability(
     "part-time": 0,
     "region-limited": 0,
     "temporarily-offline": 0,
+    unsupported: 0,
   };
   for (const channel of channels) {
     summary[channelAvailability(channel, health, now, preflights)] += 1;
@@ -201,5 +212,6 @@ export function availabilityLabel(value: ChannelAvailability): string {
     case "part-time": return "PART-TIME";
     case "region-limited": return "REGION";
     case "temporarily-offline": return "OFFLINE";
+    case "unsupported": return "EXTERNAL";
   }
 }

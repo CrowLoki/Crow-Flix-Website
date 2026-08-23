@@ -168,6 +168,7 @@ main { min-height: calc(100vh - 122px); }
 .live-badge.availability-part-time { color: #ffe4a3; border: 1px solid rgba(255, 190, 72, .38); background: rgba(65, 39, 4, .9); box-shadow: none; animation: none; }
 .live-badge.availability-region-limited { color: #ffd1d8; border: 1px solid rgba(255, 91, 117, .4); background: rgba(61, 12, 26, .92); box-shadow: none; animation: none; }
 .live-badge.availability-temporarily-offline { color: #c3c9d2; border: 1px solid rgba(163, 174, 190, .25); background: rgba(23, 28, 36, .94); box-shadow: none; animation: none; }
+.live-badge.availability-unsupported { color: #e6c8ff; border: 1px solid rgba(194, 116, 255, .4); background: rgba(43, 20, 61, .94); box-shadow: none; animation: none; }
 .quality-badge { right: 10px; color: var(--cyan); border: 1px solid rgba(51, 214, 255, .28); background: rgba(2, 13, 22, .86); }
 .play-overlay { width: 47px; height: 47px; display: grid; place-items: center; position: absolute; opacity: 0; border: 1px solid rgba(255, 255, 255, .4); border-radius: 50%; background: rgba(72, 41, 133, .88); transform: scale(.8); transition: .2s; }
 .channel-card:hover .play-overlay { opacity: 1; transform: scale(1); }

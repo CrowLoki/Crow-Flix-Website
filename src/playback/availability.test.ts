@@ -75,6 +75,15 @@ describe("channel availability", () => {
       .toBe("unverified");
   });
 
+  it("labels channels whose only sources require an external streaming protocol", () => {
+    const external = source("rtmp://provider.test/live/channel");
+    expect(channelAvailability({ sources: [external] })).toBe("unsupported");
+    expect(availabilityLabel("unsupported")).toBe("EXTERNAL");
+    expect(channelAvailability({
+      sources: [external, source("https://provider.test/live.m3u8")],
+    })).toBe("unverified");
+  });
+
   it("does not call a channel offline while an alternate route remains untried", () => {
     const item = source("https://example.test/live.m3u8");
     const now = 100_000;
@@ -100,7 +109,7 @@ describe("channel availability", () => {
     })).toBe("temporarily-offline");
   });
 
-  it("hides sources that a fresh whole-catalogue scan found dead without treating blocked sources as dead", () => {
+  it("ranks sources that a fresh whole-catalogue scan found dead without treating blocked sources as dead", () => {
     const now = 100_000;
     const failed = {
       ...source("https://example.test/failed.m3u8"),
@@ -188,7 +197,7 @@ describe("channel availability", () => {
       { sources: [source("https://example.test/b.m3u8", "Geo-blocked")] },
       { sources: [source("https://example.test/c.m3u8", "Not always on")] },
     ]);
-    expect(summary).toMatchObject({ ready: 0, unverified: 1, "region-limited": 1, "part-time": 1 });
+    expect(summary).toMatchObject({ ready: 0, unverified: 1, "region-limited": 1, "part-time": 1, unsupported: 0 });
     expect(availabilityLabel("unverified")).toBe("CHECK");
     expect(availabilityLabel("region-limited")).toBe("REGION");
   });

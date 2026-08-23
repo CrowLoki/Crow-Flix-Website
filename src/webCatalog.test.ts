@@ -127,15 +127,50 @@ describe("buildCatalogFromApi", () => {
     expect(first.channels[0].categories).toEqual(["undefined"]);
   });
 
-  it("rejects streams with non-HTTP or credential-bearing URLs", () => {
+  it("preserves recognised external-player protocols but rejects unsafe URLs", () => {
     const catalog = buildCatalogFromApi(payload({
       streams: [
-        { channel: null, title: "Bad", url: "rtmp://x.example.com/live" },
+        { channel: null, title: "External", url: "rtmp://x.example.com/live" },
+        { channel: null, title: "Bad", url: "ftp://x.example.com/live" },
         { channel: null, title: "Creds", url: "https://user:pass@x.example.com/c.m3u8" },
         { channel: null, title: "Good", url: "https://x.example.com/good.m3u8" },
       ],
     }));
-    expect(catalog.channels.map((channel) => channel.name)).toEqual(["Good"]);
+    expect(catalog.channels.map((channel) => channel.name)).toEqual(["External", "Good"]);
+    expect(catalog.channels[0].sources[0]).toMatchObject({
+      url: "rtmp://x.example.com/live",
+      transport: "unsupported",
+      provenance: "IPTV-org",
+    });
+  });
+
+  it("keeps all external-only upstream records and adds the verified Advocate HLS route", () => {
+    const externalStreams = [
+      { channel: "AdvocateBroadcastingNetwork.ng", feed: "SD", title: "Advocate Broadcasting Network", url: "srt://105.113.54.98:4001" },
+      { channel: "CTS.tw", feed: "SD", title: "CTS", url: "rtmp://59.124.75.138:1935/sat/tv111" },
+      { channel: "ExclusivTV.md", feed: "SD", title: "Exclusiv TV", url: "rtmp://89.28.25.122/live/tnt_md" },
+      { channel: "RotanaFMKSA.sa", feed: "SD", title: "Rotana FM", url: "rtmp://live.restream.io/pull/radio" },
+      { channel: "RTV1.rs", feed: "SD", title: "RTV 1", url: "mmsh://212.200.255.151/rtv1" },
+      { channel: "RTV1.rs", feed: "SD", title: "RTV 1", url: "rtsp://212.200.255.151/rtv1" },
+      { channel: "RTV2.rs", feed: "SD", title: "RTV 2", url: "mmsh://212.200.255.151/rtv2" },
+      { channel: "RTV2.rs", feed: "SD", title: "RTV 2", url: "rtsp://212.200.255.151/rtv2" },
+    ];
+    const ids = [...new Set(externalStreams.map((stream) => stream.channel))];
+    const catalog = buildCatalogFromApi(payload({
+      channels: ids.map((id) => ({ id, name: id, country: id.split(".").pop()!.toUpperCase() })),
+      streams: externalStreams,
+    }));
+
+    expect(catalog.channels).toHaveLength(6);
+    expect(catalog.channels.reduce((total, channel) => total + channel.sources.length, 0)).toBe(9);
+    const advocate = catalog.channels.find((channel) => channel.id === "AdvocateBroadcastingNetwork.ng")!;
+    expect(advocate.sources.map((source) => source.transport))
+      .toEqual(["hls", "unsupported"]);
+    expect(advocate.sources.find((source) => source.transport === "hls"))
+      .toMatchObject({
+        url: VERIFIED_PUBLIC_FALLBACKS[1].url,
+        provenance: VERIFIED_PUBLIC_FALLBACKS[1].provenance,
+      });
   });
 
   it("merges duplicate channel keys and ranks the best source first", () => {

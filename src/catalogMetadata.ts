@@ -31,6 +31,11 @@ export function sourceHostname(source: Pick<StreamSource, "url" | "logicalUrl">)
   catch { return "Unknown host"; }
 }
 
+export function sourceProtocol(source: Pick<StreamSource, "url" | "logicalUrl">): string {
+  try { return new URL(source.logicalUrl || source.url).protocol.replace(/:$/, "").toUpperCase(); }
+  catch { return "UNKNOWN"; }
+}
+
 /** Exact first-class metadata filters. "all" never changes membership. */
 export function channelMatchesMetadataFilters(
   channel: CatalogMetadataChannel,

@@ -173,4 +173,15 @@ describe("source readiness cache", () => {
       sources[3].url,
     ]);
   });
+
+  it("does not spend browser readiness requests on external-only protocols", () => {
+    expect(browserPreflightRoutes([
+      { id: "rtmp", url: "rtmp://provider.test/live" },
+      { id: "hls", url: "https://provider.test/live.m3u8" },
+    ], 3).every((source) => source.logicalUrl !== "rtmp://provider.test/live"))
+      .toBe(true);
+    expect(browserPreflightRoutes([
+      { id: "srt", url: "srt://provider.test:4001" },
+    ], 3)).toEqual([]);
+  });
 });
