@@ -35,6 +35,7 @@ for (const file of [
   "src/App.css",
   "src/webCatalog.ts",
   "src/additivePlaylists.ts",
+  "src/personalSources.ts",
   "src/streamHealthIndex.ts",
   "src/relayClient.ts",
   "src/TurnstileGuideGate.tsx",
@@ -86,7 +87,7 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", 'import("./personalSources")', "relayFetchText", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 
@@ -132,6 +133,11 @@ for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "ov
 const additivePlaylists = await readFile(path.join(repositoryRoot, "src", "additivePlaylists.ts"), "utf8");
 for (const value of ["raw-tv.m3u8", "MAX_ADDITIVE_PLAYLIST_BYTES", "MAX_ADDITIVE_PLAYLIST_ENTRIES", "Australia/Brisbane", "mjh-nz", "mjh-world"]) {
   assert(additivePlaylists.includes(value), `Additive playlist integration is missing: ${value}`);
+}
+
+const personalSources = await readFile(path.join(repositoryRoot, "src", "personalSources.ts"), "utf8");
+for (const value of ["parsePersonalPlaylist", "mergePersonalPlaylistIntoCatalog", "parsePersonalXmltv", "parsePersonalXmltvFile", "MAX_PERSONAL_PLAYLIST_ENTRIES", "Personal M3U", "Personal XMLTV"]) {
+  assert(personalSources.includes(value), `Personal browser source support is missing: ${value}`);
 }
 
 const streamHealth = await readFile(path.join(repositoryRoot, "src", "streamHealthIndex.ts"), "utf8");
@@ -193,7 +199,7 @@ assert(!headers.includes("script-src 'none'"), "_headers still disables the brow
 assert(!headers.includes("unsafe-eval"), "_headers permits unsafe-eval");
 
 const privacy = await readFile(path.join(repositoryRoot, "PRIVACY.md"), "utf8");
-for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "IPTV Nexus", "does not attach search text", "clear site data for `crowflix.tv`"]) {
+for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "IPTV Nexus", "personal playlist or XMLTV URL", "does not attach search text", "clear site data for `crowflix.tv`"]) {
   assert(privacy.includes(value), `PRIVACY.md is missing: ${value}`);
 }
 

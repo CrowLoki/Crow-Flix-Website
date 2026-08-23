@@ -379,6 +379,7 @@ main { min-height: calc(100vh - 122px); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
 .source-section { display: grid; gap: 9px; padding: 19px 0; border-top: 1px solid var(--line); }
 .source-section > label:not(.file-control) { color: #d6e0ef; font: 700 11px var(--font-mono); letter-spacing: .06em; }
+.source-privacy { display: block; margin-top: 2px; color: var(--dim); font-size: 10px; line-height: 1.5; }
 .source-section > div { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .source-section input { height: 44px; min-width: 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: #02070e; }
 .source-section input:focus { border-color: var(--violet); }

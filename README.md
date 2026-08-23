@@ -129,6 +129,15 @@ Guide requests use bounded POST bodies rather than placing large country
 catalogues in a URL. Authoritative and alternate channel names are used only
 for exact, unambiguous XMLTV display-name matching.
 
+The built-in catalogue and automatic guide require no personal setup. The
+browser also offers an optional Add source dialog for a public M3U or XMLTV URL
+or a file selected from the visitor's device. Selected files are parsed locally
+and never replace the built-in catalogue; matching M3U entries become alternate
+routes, genuinely new entries remain visible, and personal XMLTV is matched
+only to known channel IDs or unambiguous channel names. URL imports use the
+bounded, SSRF-guarded relay path for browser compatibility. Personal imports
+remain in the current browser session.
+
 ## Content and availability
 
 Crow-Flix does not host, sell, or relicense television channels. It consumes
