@@ -129,7 +129,9 @@ filled by the regional layers. XMLTV is decompressed and parsed as a bounded
 stream; only programmes matching requested channels are retained in memory.
 Guide requests use bounded POST bodies rather than placing large country
 catalogues in a URL. Authoritative and alternate channel names are used only
-for exact, unambiguous XMLTV display-name matching.
+for exact, unambiguous XMLTV display-name matching. The timeline ranks channels
+with listings first and paginates the complete country result instead of hiding
+everything beyond a fixed row cap.
 
 The built-in catalogue and automatic guide require no personal setup. The
 browser also offers an optional Add source dialog for a public M3U or XMLTV URL

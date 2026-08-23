@@ -227,6 +227,9 @@ main { min-height: calc(100vh - 122px); }
 .guide-status { height: 48px; display: flex; align-items: center; gap: 9px; padding: 0 4.3%; border-bottom: 1px solid var(--line); color: var(--muted); background: #030811; font-size: 11px; }
 .guide-status strong { color: #cbc4d8; }
 .guide-status span:last-child { margin-left: auto; }
+.guide-pagination { display: grid; justify-items: center; gap: 2px; padding: 3px 4.3% 34px; }
+.guide-pagination > span { color: var(--muted); font-size: 11px; }
+.guide-pagination .pagination { padding-top: 14px; }
 .turnstile-gate { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); align-items: center; gap: 22px; margin: 24px 4.3% 0; padding: 22px 24px; border: 1px solid var(--line-strong); border-radius: 14px; background: radial-gradient(circle at 90% 20%, rgba(168, 77, 255, .14), transparent 42%), rgba(7, 16, 27, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .28); }
 .turnstile-gate h2 { margin: 0 0 7px; font: 700 24px var(--font-display); letter-spacing: .025em; }
 .turnstile-gate p { max-width: 680px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
