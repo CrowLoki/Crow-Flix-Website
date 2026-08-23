@@ -42,6 +42,7 @@ for (const file of [
   "src/relayClient.ts",
   "src/TurnstileGuideGate.tsx",
   "src/playback/usePlaybackController.ts",
+  "src/playback/preflightWindow.ts",
   "relay/src/index.ts",
   "relay/src/turnstile.ts",
   "RECOVERY-PROVENANCE.json",
@@ -96,6 +97,11 @@ for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "pr
 const sourcePreflight = await readFile(path.join(repositoryRoot, "src", "playback", "preflight.ts"), "utf8");
 for (const value of ["browserPreflightRoutes", "runPreflightQueue", "verifyHlsMedia", "verifyDashMedia"]) {
   assert(sourcePreflight.includes(value), `Source readiness routing is missing: ${value}`);
+}
+
+const preflightWindow = await readFile(path.join(repositoryRoot, "src", "playback", "preflightWindow.ts"), "utf8");
+for (const value of ["LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT", "LIVE_CARD_PREFLIGHT_ROUTE_LIMIT", "boundedPreflightKeys", "preflightRouteLimit"]) {
+  assert(preflightWindow.includes(value), `Visible-page readiness routing is missing: ${value}`);
 }
 
 const playbackController = await readFile(path.join(repositoryRoot, "src", "playback", "usePlaybackController.ts"), "utf8");
