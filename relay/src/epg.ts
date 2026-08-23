@@ -513,6 +513,7 @@ export async function loadAutoEpg(
   fetcher: FetchLike = fetch,
   timeZone = "",
   namesByChannel: ReadonlyMap<string, readonly string[]> = new Map(),
+  aliasesByProviderId: ReadonlyMap<string, string> = new Map(),
 ): Promise<GuideResult> {
   const ids = normalizeChannelIds(channelIds);
   const code = normalizeCountryCode(country);
@@ -555,7 +556,7 @@ export async function loadAutoEpg(
           source,
           remainingIds(),
           fetcher,
-          new Map(),
+          aliasesByProviderId,
           resolvedNames,
         );
         addLayer(programmes, `IPTV-org EPG · ${source}`);
@@ -571,11 +572,15 @@ export async function loadAutoEpg(
     const regional = australianGuideSource(remainingIds(), timeZone);
     if (regional) {
       try {
+        const aliases = new Map(aliasesByProviderId);
+        for (const [providerId, channelId] of regional.aliases) {
+          aliases.set(providerId, channelId);
+        }
         const programmes = await fetchSourceProgrammes(
           regional.url,
           remainingIds(),
           fetcher,
-          regional.aliases,
+          aliases,
           resolvedNames,
         );
         addLayer(programmes, `Australian ${regional.city} guide`);
@@ -600,7 +605,7 @@ export async function loadAutoEpg(
           source,
           remainingIds(),
           fetcher,
-          new Map(),
+          aliasesByProviderId,
           resolvedNames,
         );
         if (addLayer(programmes, `Automatic regional guide · ${code}`)) break;

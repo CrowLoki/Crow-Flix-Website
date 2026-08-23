@@ -25,8 +25,8 @@ import {
   streamSourceHealthIdentity,
 } from "./streamHealthIndex";
 
-export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v7";
-export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v7";
+export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v8";
+export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v8";
 export const MAIN_FEED_OPTION_ID = "__main__";
 const WEB_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
 const API_BASE = "https://iptv-org.github.io/api";
@@ -69,6 +69,7 @@ export type WebChannel = {
   feed?: string | null;
   name: string;
   altNames?: string[];
+  epgAliases?: string[];
   owners?: string[];
   logo?: string | null;
   categories: string[];
@@ -550,6 +551,7 @@ function normalizeChannelSources(channel: WebChannel): void {
 function mergeChannel(target: WebChannel, candidate: WebChannel): void {
   target.name = chooseName(target.name, candidate.name);
   target.altNames ||= [];
+  target.epgAliases ||= [];
   target.owners ||= [];
   target.timezones ||= [];
   target.provenance ||= [];
@@ -562,6 +564,7 @@ function mergeChannel(target: WebChannel, candidate: WebChannel): void {
   mergeUnique(target.languages, candidate.languages);
   mergeUnique(target.broadcastArea, candidate.broadcastArea);
   mergeUnique(target.altNames, candidate.altNames || []);
+  mergeUnique(target.epgAliases, candidate.epgAliases || []);
   mergeUnique(target.owners, candidate.owners || []);
   mergeUnique(target.timezones, candidate.timezones || []);
   mergeUnique(target.provenance, candidate.provenance || []);
@@ -874,7 +877,8 @@ export function overlayAdditivePlaylists(
         id,
         feed: entry.config.id,
         name: entry.name,
-        altNames: [],
+      altNames: [],
+      epgAliases: [],
         owners: [],
         logo: entry.logo,
         categories: ["undefined"],
@@ -896,6 +900,8 @@ export function overlayAdditivePlaylists(
       addedChannels += 1;
     }
     channel.provenance ||= [];
+    channel.epgAliases ||= [];
+    if (entry.providerId) mergeUnique(channel.epgAliases, [entry.providerId]);
     mergeUnique(channel.provenance, [entry.config.name]);
     const before = channel.sources.length;
     addSource(channel, source);

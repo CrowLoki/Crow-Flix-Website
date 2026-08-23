@@ -59,21 +59,21 @@
   --warning: #f5bd55;
   --success: #4ce0a1;
   --radius: 14px;
-  --cursor-normal: url("/assets/brand/cursors/32/normal.png") 6 2, default;
-  --cursor-link: url("/assets/brand/cursors/32/link.png") 6 2, pointer;
-  --cursor-help: url("/assets/brand/cursors/32/help.png") 6 2, help;
-  --cursor-working: url("/assets/brand/cursors/32/working.png") 6 2, progress;
-  --cursor-busy: url("/assets/brand/cursors/32/busy.png") 16 16, wait;
-  --cursor-text: url("/assets/brand/cursors/32/text.png") 16 16, text;
-  --cursor-unavailable: url("/assets/brand/cursors/32/unavailable.png") 16 16, not-allowed;
-  --cursor-move: url("/assets/brand/cursors/32/move.png") 16 16, move;
-  --cursor-precision: url("/assets/brand/cursors/32/precision.png") 16 16, crosshair;
-  --cursor-resize-h: url("/assets/brand/cursors/32/resize-h.png") 16 16, ew-resize;
-  --cursor-resize-v: url("/assets/brand/cursors/32/resize-v.png") 16 16, ns-resize;
-  --cursor-resize-d1: url("/assets/brand/cursors/32/resize-d1.png") 16 16, nwse-resize;
-  --cursor-resize-d2: url("/assets/brand/cursors/32/resize-d2.png") 16 16, nesw-resize;
-  --cursor-handwriting: url("/assets/brand/cursors/32/handwriting.png") 3 29, default;
-  --cursor-alternate: url("/assets/brand/cursors/32/alternate.png") 16 1, default;
+  --cursor-normal: url("/assets/brand/cursors/40/normal.png") 8 3, default;
+  --cursor-link: url("/assets/brand/cursors/40/link.png") 8 3, pointer;
+  --cursor-help: url("/assets/brand/cursors/40/help.png") 8 3, help;
+  --cursor-working: url("/assets/brand/cursors/40/working.png") 8 3, progress;
+  --cursor-busy: url("/assets/brand/cursors/40/busy.png") 20 20, wait;
+  --cursor-text: url("/assets/brand/cursors/40/text.png") 20 20, text;
+  --cursor-unavailable: url("/assets/brand/cursors/40/unavailable.png") 20 20, not-allowed;
+  --cursor-move: url("/assets/brand/cursors/40/move.png") 20 20, move;
+  --cursor-precision: url("/assets/brand/cursors/40/precision.png") 20 20, crosshair;
+  --cursor-resize-h: url("/assets/brand/cursors/40/resize-h.png") 20 20, ew-resize;
+  --cursor-resize-v: url("/assets/brand/cursors/40/resize-v.png") 20 20, ns-resize;
+  --cursor-resize-d1: url("/assets/brand/cursors/40/resize-d1.png") 20 20, nwse-resize;
+  --cursor-resize-d2: url("/assets/brand/cursors/40/resize-d2.png") 20 20, nesw-resize;
+  --cursor-handwriting: url("/assets/brand/cursors/40/handwriting.png") 4 36, default;
+  --cursor-alternate: url("/assets/brand/cursors/40/alternate.png") 20 1, default;
 }
 
 * { box-sizing: border-box; }

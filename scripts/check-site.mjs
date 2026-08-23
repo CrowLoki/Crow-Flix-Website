@@ -99,7 +99,7 @@ for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "av
 }
 
 const appCss = await readFile(path.join(repositoryRoot, "src", "App.css"), "utf8");
-assert(appCss.includes('/cursors/32/normal.png'), "CrowFlix does not use the half-size claw cursor artwork");
+assert(appCss.includes('/cursors/40/normal.png'), "CrowFlix does not use the requested enlarged claw cursor artwork");
 assert(!appCss.includes('/cursors/normal.cur'), "CrowFlix still references the oversized cursor file");
 for (const value of ["runPreflightQueue(", "preflightSource(", "browserPreflightRoutes("]) {
   assert(!app.includes(value), `The browser app still probes channel sources before the viewer selects one: ${value}`);
@@ -109,6 +109,7 @@ const playbackController = await readFile(path.join(repositoryRoot, "src", "play
 for (const value of ['import("hls.js")', 'import("dashjs")', "reorderRemainingSources", "orderSourcesByPreflight", "sourceOptions", "subtitleOptions", "qualityOptions", "audioOptions", "selectSource", "selectSubtitle", "selectQuality", "Trying the next playback route"]) {
   assert(playbackController.includes(value), `Dynamic playback failover is missing: ${value}`);
 }
+
 assert(!/^import Hls from "hls\.js";/m.test(playbackController), "HLS.js is still bundled into initial page startup");
 assert(!app.includes("Download Crow-Flix for Windows"), "The browser app was replaced by a desktop download page");
 assert(!app.includes("showAllCatalogued"), "Live TV still defaults to hiding catalogue entries");
@@ -132,12 +133,12 @@ for (const value of ["fetchValidatedWithUrl", 'upstreamHeaders.set("Range"', '"c
 }
 
 const relayEpg = await readFile(path.join(repositoryRoot, "relay", "src", "epg.ts"), "utf8");
-for (const value of ["streamGuidesJson", "32 * 1024 * 1024", "australianGuideSource", "epgSharePrimaryTag", "Australia/Brisbane", "96 * 1024 * 1024", "MAX_COMBINED_PROGRAMMES", "remainingIds", "sourceLabels", "i.mjh.nz/au/"]) {
+for (const value of ["streamGuidesJson", "32 * 1024 * 1024", "australianGuideSource", "epgSharePrimaryTag", "Australia/Brisbane", "96 * 1024 * 1024", "MAX_COMBINED_PROGRAMMES", "remainingIds", "sourceLabels", "i.mjh.nz/au/", "aliasesByProviderId"]) {
   assert(relayEpg.includes(value), `Relay guide integration is missing: ${value}`);
 }
 
 const webCatalog = await readFile(path.join(repositoryRoot, "src", "webCatalog.ts"), "utf8");
-for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "AdvocateBroadcastingNetwork.ng", "viewmedia7219.bozztv.com", "overlayAmagiFastFallbacks", "overlayVerifiedPublicFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "loadAdditivePlaylists", "overlayAdditivePlaylists", "normalizeStreamUrl", "EXTERNAL_PLAYER_PROTOCOLS", "provenances", "Known-dead deployment", "CrowFlix verified Amagi replacement", "Referer is a request-header value", "regional/provider playlists", "verified public fallbacks", "recent source health", "current FAST fallbacks", "crowflix-catalog-v7", "ownerCounts", "networkCounts", "feedCounts", "providerCounts", 'fetchJson<ApiSubdivision[]>("subdivisions")', 'fetchJson<ApiCity[]>("cities")', 'fetchJson<ApiTimezone[]>("timezones")']) {
+for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "AdvocateBroadcastingNetwork.ng", "viewmedia7219.bozztv.com", "overlayAmagiFastFallbacks", "overlayVerifiedPublicFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "loadAdditivePlaylists", "overlayAdditivePlaylists", "normalizeStreamUrl", "EXTERNAL_PLAYER_PROTOCOLS", "provenances", "Known-dead deployment", "CrowFlix verified Amagi replacement", "Referer is a request-header value", "regional/provider playlists", "verified public fallbacks", "recent source health", "current FAST fallbacks", "crowflix-catalog-v8", "epgAliases", "mjh-seven-", "ownerCounts", "networkCounts", "feedCounts", "providerCounts", 'fetchJson<ApiSubdivision[]>("subdivisions")', 'fetchJson<ApiCity[]>("cities")', 'fetchJson<ApiTimezone[]>("timezones")']) {
   assert(webCatalog.includes(value), `Catalogue fallback repair is missing: ${value}`);
 }
 
