@@ -8,6 +8,11 @@ browser. The application includes search, categories, regions, favourites,
 recent channels, programme guides, source failover, HLS and MPEG-DASH playback,
 hardware-style zapping, and the user-managed Web Library.
 
+The catalogue and interface load without either large playback engine. HLS.js
+and DASH.js are separate on-demand chunks fetched only when their transport is
+selected; native HLS remains available on browsers that provide it. This keeps
+the initial minified JavaScript below 500 KiB while preserving the full player.
+
 ## Project identity
 
 Crow-Flix-Website is an original project created and owned by Crow. It is the
