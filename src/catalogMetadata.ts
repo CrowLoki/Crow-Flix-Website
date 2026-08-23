@@ -19,9 +19,14 @@ export type CatalogMetadataFilters = {
 export function channelProviders(channel: CatalogMetadataChannel): string[] {
   return [...new Set([
     ...(channel.provenance || []),
-    ...(channel.sources || [])
-      .map((source) => source.provenance)
-      .filter((provider): provider is string => Boolean(provider)),
+    ...(channel.sources || []).flatMap(sourceProvenances),
+  ])];
+}
+
+export function sourceProvenances(source: Pick<StreamSource, "provenance" | "provenances">): string[] {
+  return [...new Set([
+    ...(source.provenances || []),
+    ...(source.provenance ? [source.provenance] : []),
   ])];
 }
 

@@ -4,6 +4,7 @@ import {
   channelProviders,
   sourceHostname,
   sourceProtocol,
+  sourceProvenances,
 } from "./catalogMetadata";
 import { MAIN_FEED_OPTION_ID } from "./webCatalog";
 
@@ -14,13 +15,14 @@ const channel = {
   provenance: ["IPTV-org"],
   sources: [
     { url: "https://one.test/live.m3u8", provenance: "IPTV-org" },
-    { url: "https://two.test/live.m3u8", provenance: "Regional provider" },
+    { url: "https://two.test/live.m3u8", provenance: "Regional provider", provenances: ["Regional provider", "Mirror index"] },
   ],
 };
 
 describe("catalogue metadata filters", () => {
   it("combines channel and per-source provenance without duplicates", () => {
-    expect(channelProviders(channel)).toEqual(["IPTV-org", "Regional provider"]);
+    expect(channelProviders(channel)).toEqual(["IPTV-org", "Regional provider", "Mirror index"]);
+    expect(sourceProvenances(channel.sources[1])).toEqual(["Regional provider", "Mirror index"]);
   });
 
   it("matches owner, network, main feed, and provider exactly", () => {

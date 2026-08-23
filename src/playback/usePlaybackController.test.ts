@@ -192,6 +192,7 @@ describe("PlaybackRun retry", () => {
           url: "https://private-provider.test/live.m3u8?token=hidden",
           delivery: "relay",
           provenance: "IPTV-org",
+          provenances: ["IPTV-org", "Mirror index"],
           quality: "1080p",
           preferenceScore: 100,
         },
@@ -211,7 +212,7 @@ describe("PlaybackRun retry", () => {
     expect(initial?.sourceOptions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         sourceId: "primary-route",
-        label: "IPTV-org",
+        label: "IPTV-org + Mirror index",
         detail: "Relay · 1080p · HLS",
       }),
       expect.objectContaining({

@@ -275,6 +275,7 @@ export function parsePersonalPlaylist(
         || referrer
       ),
       provenance,
+      provenances: [provenance],
     };
     source.id = sourceIdentifier(source);
     const identity = providerIdentity(
@@ -474,7 +475,10 @@ export function mergePersonalPlaylistIntoCatalog(
       catalog.providers,
       optionCounts(added, (channel) => [
         ...(channel.provenance || []),
-        ...channel.sources.map((source) => source.provenance || "").filter(Boolean),
+        ...channel.sources.flatMap((source) => [
+          ...(source.provenances || []),
+          ...(source.provenance ? [source.provenance] : []),
+        ]),
       ]),
       (id) => id,
     ),

@@ -36,6 +36,8 @@ export type StreamSource = {
   catalogHealth?: CatalogSourceHealth;
   /** Public catalogue/playlist that contributed this exact source. */
   provenance?: string;
+  /** Every catalogue/playlist that contributed the same exact URL/header identity. */
+  provenances?: string[];
 };
 
 export type CatalogSourceHealthStatus =

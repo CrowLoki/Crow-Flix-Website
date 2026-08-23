@@ -52,6 +52,7 @@ import {
   channelProviders,
   sourceHostname,
   sourceProtocol,
+  sourceProvenances,
 } from "./catalogMetadata";
 import {
   assertImportFileSize,
@@ -1456,7 +1457,7 @@ function ChannelDetails({ channel, now, next, favourite, onPlay, onFavourite, on
       <section className="channel-source-list" aria-label={`${channel.name} playback source metadata`}>
         <div><h3>Playback sources</h3><span>{sources.length.toLocaleString()} preserved routes before browser delivery fallbacks</span></div>
         {sources.map((source, index) => <article key={sourceIdentifier(source, index)}>
-          <span><strong>{source.provenance || source.title || source.label || `Source ${index + 1}`}</strong><small>{sourceHostname(source)}</small></span>
+          <span><strong>{sourceProvenances(source).join(" + ") || source.title || source.label || `Source ${index + 1}`}</strong><small>{sourceHostname(source)}</small></span>
           <div>{source.quality && <b>{source.quality}</b>}<b>{(source.transport || source.transportHint || "unknown").toUpperCase()}</b><b>{sourceProtocol(source)}</b>{source.requiresHeaders && <b>Provider headers</b>}</div>
         </article>)}
       </section>
