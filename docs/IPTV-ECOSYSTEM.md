@@ -134,8 +134,13 @@ the automatic guide pipeline.
 
 ## Capability audit still in progress
 
-The full goal remains active. Important remaining work includes more guide
-providers and mappings for countries with low coverage,
-catch-up/recording only where a source lawfully publishes the required
-metadata, and broader real-device/browser acceptance. Passing CI or a single
-sample is not completion evidence for those items.
+The current IPTV-org stream API explicitly removed its former `timeshift`
+field and publishes no catch-up URL template or recording entitlement. CrowFlix
+therefore does not fabricate catch-up/record controls from programme listings
+or provider web pages. The capability can be added only when a retained source
+lawfully publishes the required playback metadata.
+
+Automated acceptance includes the full unit/relay suite, real manifest and
+first-media checks, deployed-file/header verification, and the dependency-free
+Chrome/Edge headless UI flow. Physical device/browser testing remains distinct
+evidence; passing CI or one sample is never reported as that physical result.

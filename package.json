@@ -21,6 +21,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "relay:typecheck": "tsc --noEmit -p relay/tsconfig.json",
+    "acceptance:headless": "node scripts/headless-acceptance.mjs",
     "check": "npm run typecheck && npm run test && npm run relay:typecheck && npm run build && node scripts/check-site.mjs"
   },
   "dependencies": {
