@@ -103,6 +103,8 @@ Built-in guide retrieval is automatic and protected by Turnstile only at `/epg`:
 8. Gzip XMLTV is parsed as a bounded stream; only requested programmes are
    retained in memory. The combined result is deduplicated by channel/start/stop
    and bounded to 50,000 programmes.
+9. The guide timeline paginates every channel in the selected country; listing
+   coverage and playback health affect ordering only, never membership.
 
 Optional personal XMLTV files are streamed through the same bounded matching
 parser locally. Public personal XMLTV URLs use the bounded SSRF-guarded relay;

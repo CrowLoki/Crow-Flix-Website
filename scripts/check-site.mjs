@@ -35,6 +35,7 @@ for (const file of [
   "src/App.css",
   "src/webCatalog.ts",
   "src/additivePlaylists.ts",
+  "src/guideNavigation.ts",
   "src/personalSources.ts",
   "src/streamHealthIndex.ts",
   "src/relayClient.ts",
@@ -87,7 +88,7 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", 'import("./personalSources")', "relayFetchText", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 
@@ -104,6 +105,7 @@ assert(!/^import Hls from "hls\.js";/m.test(playbackController), "HLS.js is stil
 assert(!app.includes("Download Crow-Flix for Windows"), "The browser app was replaced by a desktop download page");
 assert(!app.includes("showAllCatalogued"), "Live TV still defaults to hiding catalogue entries");
 assert(!app.includes("limited/offline hidden"), "Live TV still reports silently hidden channels");
+assert(!app.includes(".slice(0, 140)"), "The programme guide still hides channels behind a fixed row cap");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/PRIVACY.md"), "The About page does not link to the website privacy notice");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/SECURITY.md"), "The About page does not link to the website security policy");
 assert(!app.includes("A cinematic desktop IPTV player"), "The About page still identifies the website as the desktop app");
