@@ -3,6 +3,7 @@ import { orderPlaybackSources } from "./playback/logic";
 import {
   loadRelayGuide,
   logicalDashRequestUrl,
+  relayFetchText,
   relayStreamUrl,
   routeDashRequestUrl,
   toWebPlayableSource,
@@ -46,6 +47,32 @@ describe("loadRelayGuide", () => {
     ));
     await expect(loadRelayGuide("AU", [{ id: "ABC.au", names: ["ABC"] }], "bad-token"))
       .rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("relayFetchText", () => {
+  it("fetches a personal public source through the bounded no-store relay path", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("#EXTM3U\n", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(relayFetchText("https://provider.test/channels.m3u", 1_024))
+      .resolves.toBe("#EXTM3U\n");
+    const [url, init] = fetcher.mock.calls[0] ?? [];
+    expect(new URL(String(url)).pathname).toBe("/fetch");
+    expect(new URL(String(url)).searchParams.get("url"))
+      .toBe("https://provider.test/channels.m3u");
+    expect(init?.cache).toBe("no-store");
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("stops a response that exceeds the selected browser import limit", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("12345", { status: 200 }),
+    ));
+    await expect(relayFetchText("https://provider.test/large.xml", 4))
+      .rejects.toThrow(/exceeds.*browser import limit/i);
   });
 });
 

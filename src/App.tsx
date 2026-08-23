@@ -91,6 +91,7 @@ import { appendZapDigit, resolveZapNumber, zapTarget } from "./zap";
 import { loadWebCatalog } from "./webCatalog";
 import {
   loadRelayGuide,
+  relayFetchText,
   RelayRequestError,
   toWebPlayableSources,
 } from "./relayClient";
@@ -266,6 +267,22 @@ function nextProgramme(programmes: Programme[], channelId: string, clock: Date) 
   return programmes.filter((item) => item.channelId === channelId && new Date(item.start).getTime() > now).sort((a, b) => a.start.localeCompare(b.start))[0];
 }
 
+function mergeProgrammes(
+  primary: readonly Programme[],
+  supplemental: readonly Programme[],
+): Programme[] {
+  const merged = new Map<string, Programme>();
+  for (const programme of [...primary, ...supplemental]) {
+    merged.set(
+      `${programme.channelId}\u0000${programme.start}\u0000${programme.stop}`,
+      programme,
+    );
+  }
+  return [...merged.values()].sort((left, right) =>
+    left.start.localeCompare(right.start)
+    || left.channelId.localeCompare(right.channelId));
+}
+
 function uniqueChannelIds(channels: Channel[]) {
   return [...new Set(channels.map((channel) => channel.id))];
 }
@@ -356,6 +373,7 @@ export default function App() {
   );
   const videoRef = useRef<HTMLVideoElement>(null);
   const guideCache = useRef(new Map<string, GuideResult>());
+  const personalGuide = useRef<GuideResult | null>(null);
   const skipInitialWebSave = useRef(true);
   const previousChannelKey = useRef<string | null>(null);
   const zapBuffer = useRef("");
@@ -405,6 +423,7 @@ export default function App() {
     setToast(message);
     window.setTimeout(() => setToast(""), 3500);
   }, []);
+  const closeSourceDialog = useCallback(() => setSourceOpen(false), []);
 
   const loadCatalog = useCallback(async (force = false) => {
     setLoading(true);
@@ -475,6 +494,22 @@ export default function App() {
     setRecent(migrate);
   }, [catalog.channels]);
 
+  const applyGuideResult = useCallback((result: GuideResult) => {
+    const personal = personalGuide.current;
+    const includePersonal = personal && personal.source !== result.source;
+    const combined = mergeProgrammes(
+      result.programmes,
+      includePersonal ? personal.programmes : [],
+    );
+    const source = includePersonal
+      ? `${result.source} + ${personal.source}`
+      : result.source;
+    setProgrammes(combined);
+    setGuideStatus(
+      `${source} · ${new Set(combined.map((programme) => programme.channelId)).size.toLocaleString()} channels matched`,
+    );
+  }, []);
+
   const loadGuide = useCallback(async (
     code: string,
     force = false,
@@ -497,10 +532,21 @@ export default function App() {
     }
     const cached = guideCache.current.get(targetCountry);
     if (cached && !force) {
-      setProgrammes(cached.programmes);
       setGuideNeedsVerification(false);
       setGuideVerificationError(null);
-      setGuideStatus(`${cached.source} · ${cached.matchedChannels.toLocaleString()} channels matched`);
+      applyGuideResult(cached);
+      return;
+    }
+    const personal = personalGuide.current;
+    const countryChannelIds = new Set(countryChannels.map((channel) => channel.id));
+    if (
+      personal
+      && !force
+      && personal.programmes.some((programme) => countryChannelIds.has(programme.channelId))
+    ) {
+      setGuideNeedsVerification(false);
+      setGuideVerificationError(null);
+      applyGuideResult(personal);
       return;
     }
     if (!isDesktop) {
@@ -508,7 +554,9 @@ export default function App() {
         const result: GuideResult = { programmes: makeDemoProgrammes(countryChannels), source: "CrowFlix preview guide", matchedChannels: countryChannels.length, updatedAt: new Date().toISOString() };
         setGuideNeedsVerification(false);
         setGuideVerificationError(null);
-        guideCache.current.set(targetCountry, result); setProgrammes(result.programmes); setGuideStatus(`${result.source} · live now and up next`); return;
+        guideCache.current.set(targetCountry, result);
+        applyGuideResult(result);
+        return;
       }
       if (!turnstileToken) {
         setGuideNeedsVerification(true);
@@ -528,10 +576,9 @@ export default function App() {
           Intl.DateTimeFormat().resolvedOptions().timeZone,
         );
         guideCache.current.set(targetCountry, result);
-        setProgrammes(result.programmes);
-        setGuideStatus(`${result.source} · ${result.matchedChannels.toLocaleString()} channels matched`);
+        applyGuideResult(result);
       } catch (error) {
-        setProgrammes([]);
+        setProgrammes(personalGuide.current?.programmes || []);
         const message = error instanceof Error ? error.message : String(error);
         setGuideStatus(message);
         if (error instanceof RelayRequestError && error.status === 403) {
@@ -546,13 +593,12 @@ export default function App() {
     try {
       const result = await invoke<GuideResult>("load_auto_epg", { country: targetCountry, channelIds: uniqueChannelIds(countryChannels) });
       guideCache.current.set(targetCountry, result);
-      setProgrammes(result.programmes);
-      setGuideStatus(`${result.source} · ${result.matchedChannels.toLocaleString()} channels matched`);
+      applyGuideResult(result);
     } catch (error) {
-      setProgrammes([]);
+      setProgrammes(personalGuide.current?.programmes || []);
       setGuideStatus(error instanceof Error ? error.message : String(error));
     } finally { setGuideLoading(false); }
-  }, [catalog.channels, catalog.regions, catalog.source, isDesktop]);
+  }, [applyGuideResult, catalog.channels, catalog.regions, catalog.source, isDesktop]);
 
   useEffect(() => {
     if (view === "guide" && catalog.channels.length) void loadGuide(guideCountry);
@@ -631,48 +677,102 @@ export default function App() {
     if (!sourceUrl.trim()) return;
     setLoading(true); setLoadingMessage("Adding your playlist…");
     try {
-      const custom = await invoke<Channel[]>("load_playlist", { source: sourceUrl.trim() });
-      setCatalog((current) => ({ ...current, channels: mergeChannelsByKey(current.channels, custom), source: `${current.source} + custom playlist` }));
-      setSourceOpen(false); showToast(`${custom.length.toLocaleString()} personal channels added`);
+      if (isDesktop) {
+        const custom = await invoke<Channel[]>("load_playlist", { source: sourceUrl.trim() });
+        setCatalog((current) => ({ ...current, channels: mergeChannelsByKey(current.channels, custom), source: `${current.source} + custom playlist` }));
+        showToast(`${custom.length.toLocaleString()} personal channels added`);
+      } else {
+        const personal = await import("./personalSources");
+        const source = personal.normalizePersonalSourceUrl(sourceUrl.trim());
+        const content = await relayFetchText(source, MAX_PLAYLIST_IMPORT_BYTES);
+        const custom = personal.parsePersonalPlaylist(content, new URL(source).hostname);
+        setCatalog((current) => personal.mergePersonalPlaylistIntoCatalog(current, custom));
+        showToast(`${custom.length.toLocaleString()} personal channels added`);
+      }
+      setSourceUrl("");
+      setSourceOpen(false);
+      setView("live");
     } catch (error) { showToast(error instanceof Error ? error.message : String(error)); }
     finally { setLoading(false); }
   };
 
   const importPlaylistFile = async (file: File) => {
+    setLoading(true);
+    setLoadingMessage("Reading your playlist on this device…");
     try {
       assertImportFileSize(
         file,
         "playlist",
         MAX_PLAYLIST_IMPORT_BYTES,
       );
-      const custom = await invoke<Channel[]>("parse_playlist_text", { text: await file.text() });
-      setCatalog((current) => ({ ...current, channels: mergeChannelsByKey(current.channels, custom), source: `${current.source} + ${file.name}` }));
-      setSourceOpen(false); showToast(`${custom.length.toLocaleString()} personal channels added`);
+      const content = await file.text();
+      if (isDesktop) {
+        const custom = await invoke<Channel[]>("parse_playlist_text", { text: content });
+        setCatalog((current) => ({ ...current, channels: mergeChannelsByKey(current.channels, custom), source: `${current.source} + ${file.name}` }));
+        showToast(`${custom.length.toLocaleString()} personal channels added`);
+      } else {
+        const personal = await import("./personalSources");
+        const custom = personal.parsePersonalPlaylist(content, file.name);
+        setCatalog((current) => personal.mergePersonalPlaylistIntoCatalog(current, custom));
+        showToast(`${custom.length.toLocaleString()} personal channels added`);
+      }
+      setSourceOpen(false);
+      setView("live");
     } catch (error) { showToast(error instanceof Error ? error.message : String(error)); }
+    finally { setLoading(false); }
   };
 
   const importEpgUrl = async () => {
     if (!epgUrl.trim()) return;
     setGuideLoading(true);
     try {
-      const result = await invoke<GuideResult>("load_epg", { source: epgUrl.trim(), channelIds: uniqueChannelIds(catalog.channels) });
-      setProgrammes(result.programmes); setGuideStatus(`${result.source} · ${result.matchedChannels.toLocaleString()} channels matched`);
-      setSourceOpen(false); showToast("Personal programme guide loaded");
+      let result: GuideResult;
+      if (isDesktop) {
+        result = await invoke<GuideResult>("load_epg", { source: epgUrl.trim(), channelIds: uniqueChannelIds(catalog.channels) });
+      } else {
+        const personal = await import("./personalSources");
+        const source = personal.normalizePersonalSourceUrl(epgUrl.trim());
+        const content = await relayFetchText(source, MAX_XMLTV_IMPORT_BYTES);
+        result = personal.parsePersonalXmltv(content, catalog.channels, new URL(source).hostname);
+      }
+      personalGuide.current = result;
+      guideCache.current.set(guideCountry, result);
+      setGuideNeedsVerification(false);
+      setGuideVerificationError(null);
+      applyGuideResult(result);
+      setEpgUrl("");
+      setSourceOpen(false);
+      setView("guide");
+      showToast(`Personal guide loaded · ${result.matchedChannels.toLocaleString()} channels matched`);
     } catch (error) { showToast(error instanceof Error ? error.message : String(error)); }
     finally { setGuideLoading(false); }
   };
 
   const importEpgFile = async (file: File) => {
+    setGuideLoading(true);
     try {
       assertImportFileSize(
         file,
         "programme guide",
         MAX_XMLTV_IMPORT_BYTES,
       );
-      const result = await invoke<GuideResult>("parse_epg_text", { text: await file.text(), channelIds: uniqueChannelIds(catalog.channels) });
-      setProgrammes(result.programmes); setGuideStatus(`${file.name} · ${result.matchedChannels.toLocaleString()} channels matched`);
-      setSourceOpen(false); showToast("Personal programme guide loaded");
+      let result: GuideResult;
+      if (isDesktop) {
+        result = await invoke<GuideResult>("parse_epg_text", { text: await file.text(), channelIds: uniqueChannelIds(catalog.channels) });
+      } else {
+        const personal = await import("./personalSources");
+        result = await personal.parsePersonalXmltvFile(file, catalog.channels);
+      }
+      personalGuide.current = result;
+      guideCache.current.set(guideCountry, result);
+      setGuideNeedsVerification(false);
+      setGuideVerificationError(null);
+      applyGuideResult(result);
+      setSourceOpen(false);
+      setView("guide");
+      showToast(`Personal guide loaded · ${result.matchedChannels.toLocaleString()} channels matched`);
     } catch (error) { showToast(error instanceof Error ? error.message : String(error)); }
+    finally { setGuideLoading(false); }
   };
 
   const healthNow = clock.getTime();
@@ -897,7 +997,7 @@ export default function App() {
   return (
     <PlaybackAvailabilityContext.Provider value={availabilityByChannel}>
     <div className="app-shell">
-      <Header view={view} onView={changeView} query={query} onQuery={(value) => { setQuery(value); if (value && view !== "web") setView("live"); }} onSource={() => setSourceOpen(true)} canAddSource={isDesktop} />
+      <Header view={view} onView={changeView} query={query} onQuery={(value) => { setQuery(value); if (value && view !== "web") setView("live"); }} onSource={() => setSourceOpen(true)} canAddSource />
       {loading && <LoadingOverlay message={loadingMessage} />}
       {catalogError && <CatalogErrorBanner message={catalogError} hasCatalog={catalog.channels.length > 0} loading={loading} onRetry={() => void loadCatalog(catalog.channels.length > 0)} />}
       <main>
@@ -914,7 +1014,7 @@ export default function App() {
           ? <footer className="status-bar"><span><Info weight="fill" /> CrowFlix 0.5.1</span><span>Copyright © 2026 Crow · AGPL-3.0-only</span></footer>
         : <footer className="status-bar"><span><Broadcast weight="fill" /> {catalog.channels.length.toLocaleString()} catalogued · {availabilitySummary.verified.toLocaleString()} live · {availabilitySummary.ready.toLocaleString()} ready · {sourceCount.toLocaleString()} sources</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
       {playing && <Player channel={playing} now={currentProgramme(programmes, playing.id, clock)} next={nextProgramme(programmes, playing.id, clock)} playback={playback} videoRef={videoRef} zapNotice={zapNotice} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={() => setPlaying(null)} />}
-      {sourceOpen && <SourceDialog sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} epgUrl={epgUrl} setEpgUrl={setEpgUrl} loading={loading || guideLoading} onClose={() => setSourceOpen(false)} onPlaylistUrl={() => void importPlaylistUrl()} onPlaylistFile={(file) => void importPlaylistFile(file)} onEpgUrl={() => void importEpgUrl()} onEpgFile={(file) => void importEpgFile(file)} />}
+      {sourceOpen && <SourceDialog sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} epgUrl={epgUrl} setEpgUrl={setEpgUrl} loading={loading || guideLoading} onClose={closeSourceDialog} onPlaylistUrl={() => void importPlaylistUrl()} onPlaylistFile={(file) => void importPlaylistFile(file)} onEpgUrl={() => void importEpgUrl()} onEpgFile={(file) => void importEpgFile(file)} />}
       {toast && <div className="toast"><CheckCircle weight="fill" />{toast}</div>}
     </div>
     </PlaybackAvailabilityContext.Provider>
@@ -1255,7 +1355,59 @@ function Player({
 }
 
 function SourceDialog({ sourceUrl, setSourceUrl, epgUrl, setEpgUrl, loading, onClose, onPlaylistUrl, onPlaylistFile, onEpgUrl, onEpgFile }: { sourceUrl: string; setSourceUrl: (value: string) => void; epgUrl: string; setEpgUrl: (value: string) => void; loading: boolean; onClose: () => void; onPlaylistUrl: () => void; onPlaylistFile: (file: File) => void; onEpgUrl: () => void; onEpgFile: (file: File) => void }) {
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="source-dialog" role="dialog" aria-modal="true" aria-labelledby="source-dialog-title"><button className="dialog-close" aria-label="Close source dialog" onClick={onClose}><X /></button><span className="overline"><CloudArrowUp /> Optional personal sources</span><h2 id="source-dialog-title">Expand CrowFlix</h2><p>The worldwide IPTV-org catalogue and programme guide are already included. Add your own source only when you want more.</p><div className="source-section"><label>Personal M3U playlist URL</label><div><input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://example.com/playlist.m3u" /><button onClick={onPlaylistUrl} disabled={loading}>{loading ? <SpinnerGap className="spin" /> : "Add"}</button></div><label className="file-control"><CloudArrowUp /> Choose M3U file<input type="file" accept=".m3u,.m3u8,text/plain" onChange={(event) => { const file = event.target.files?.[0]; if (file) onPlaylistFile(file); }} /></label></div><div className="source-section"><label>Personal XMLTV guide URL</label><div><input value={epgUrl} onChange={(event) => setEpgUrl(event.target.value)} placeholder="https://example.com/guide.xml" /><button onClick={onEpgUrl} disabled={loading}>{loading ? <SpinnerGap className="spin" /> : "Add"}</button></div><label className="file-control"><CalendarDots /> Choose XMLTV file<input type="file" accept=".xml,.xmltv,text/xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) onEpgFile(file); }} /></label></div></section></div>;
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const focusable = () => [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    ) || [])];
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previous?.focus();
+    };
+  }, [onClose]);
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+    <section ref={dialogRef} className="source-dialog" role="dialog" aria-modal="true" aria-labelledby="source-dialog-title">
+      <button type="button" className="dialog-close" aria-label="Close source dialog" onClick={onClose}><X /></button>
+      <span className="overline"><CloudArrowUp /> Optional personal sources</span>
+      <h2 id="source-dialog-title">Expand CrowFlix</h2>
+      <p>The complete worldwide catalogue and automatic guide are already included. Personal files are read on this device; public source URLs are fetched through the bounded CrowFlix relay for browser compatibility.</p>
+      <div className="source-section">
+        <label htmlFor="personal-playlist-url">Personal M3U playlist URL</label>
+        <div><input id="personal-playlist-url" type="url" inputMode="url" autoComplete="off" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://example.com/playlist.m3u" /><button type="button" onClick={onPlaylistUrl} disabled={loading}>{loading ? <SpinnerGap className="spin" /> : "Add"}</button></div>
+        <label className="file-control"><CloudArrowUp /> Choose M3U file<input type="file" accept=".m3u,.m3u8,text/plain" onChange={(event) => { const file = event.target.files?.[0]; if (file) onPlaylistFile(file); }} /></label>
+      </div>
+      <div className="source-section">
+        <label htmlFor="personal-epg-url">Personal XMLTV guide URL</label>
+        <div><input id="personal-epg-url" type="url" inputMode="url" autoComplete="off" value={epgUrl} onChange={(event) => setEpgUrl(event.target.value)} placeholder="https://example.com/guide.xml" /><button type="button" onClick={onEpgUrl} disabled={loading}>{loading ? <SpinnerGap className="spin" /> : "Add"}</button></div>
+        <label className="file-control"><CalendarDots /> Choose XMLTV file<input type="file" accept=".xml,.xmltv,text/xml" onChange={(event) => { const file = event.target.files?.[0]; if (file) onEpgFile(file); }} /></label>
+      </div>
+      <small className="source-privacy">Use public HTTP(S) URLs only. Personal imports stay in this browser session and never replace the built-in catalogue.</small>
+    </section>
+  </div>;
 }
 
 function LoadingOverlay({ message }: { message: string }) { return <div className="loading-overlay"><img src={BRAND_ICON} alt="" /><div className="loading-ring" /><h2>{message}</h2><p>Building your live television universe</p></div>; }

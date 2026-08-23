@@ -20,8 +20,9 @@ Optional whole-catalogue stream-health data is treated as untrusted. CrowFlix
 accepts it only when its manifest and individual checks are fresh, its bounded
 compressed and decompressed payloads validate, and each record matches an
 existing IPTV-org URL, Referer, and User-Agent exactly. Health data can change
-ordering or hide a recently failed source; it cannot introduce a new playback
-URL, override a successful local preflight, or bypass a provider restriction.
+ordering or rank a recently failed source lower; it cannot introduce a new
+playback URL, override a successful local preflight, hide a source or channel,
+or bypass a provider restriction.
 Remote health for a literal-IP stream is not treated as strong browser
 reachability evidence because the website cannot load HTTP media directly and
 the provider can independently reject Cloudflare relay traffic.
@@ -40,3 +41,9 @@ Additive playlist URLs are selected from a fixed configuration, fetched through
 the SSRF-guarded relay, capped before parsing, and accepted only as HTTP(S)
 media entries. Exact URL/header identities are deduplicated and every retained
 source records its public playlist provenance.
+
+Optional personal M3U and XMLTV files are size-bounded and parsed locally.
+Personal URL imports use the same SSRF-guarded, redirect-validating relay and a
+bounded browser reader. Only normal HTTP(S) media entries are accepted;
+embedded username/password URLs and non-web protocols are rejected. Personal
+imports are additive and cannot replace or suppress the built-in catalogue.

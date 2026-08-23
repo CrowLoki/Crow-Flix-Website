@@ -71,12 +71,18 @@ Current individually verified public fallbacks are tracked in source with an
 exact channel ID, distinct feed label, and provenance. They augment rather than
 replace upstream sources.
 
+An optional personal-source layer is available in the browser without changing
+the upstream repositories or built-in catalogue. Selected M3U files are parsed
+locally; public M3U URLs use the bounded SSRF-guarded relay. Exact channel IDs
+gain alternate routes, genuinely new channels extend the matching browse
+dimensions, and all imported routes retain personal-source provenance.
+
 Live TV always contains the complete matching result set. `Working first` and
 `A–Z` change order only. Health or availability never silently removes entries.
 
 ## Programme guide pipeline
 
-Guide retrieval is automatic and protected by Turnstile only at `/epg`:
+Built-in guide retrieval is automatic and protected by Turnstile only at `/epg`:
 
 1. The browser sends a bounded POST containing country, timezone, current
    channel IDs, authoritative names and alternate names.
@@ -94,11 +100,17 @@ Guide retrieval is automatic and protected by Turnstile only at `/epg`:
 7. Gzip XMLTV is parsed as a bounded stream; only requested programmes are
    retained in memory.
 
+Optional personal XMLTV files are streamed through the same bounded matching
+parser locally. Public personal XMLTV URLs use the bounded SSRF-guarded relay;
+only known IDs and unambiguous channel-name matches are retained. Personal
+programme data is additive for the current browser session and does not replace
+the automatic guide pipeline.
+
 ## Capability audit still in progress
 
 The full goal remains active. Important remaining work includes deeper source
 group/provenance navigation, richer owner/network/feed detail in channel UI,
-more guide providers and mappings for countries with low coverage, explicit
-source selection, catch-up/recording only where a source lawfully publishes the
-required metadata, and broader real-device/browser acceptance. Passing CI or a
-single sample is not completion evidence for those items.
+more guide providers and mappings for countries with low coverage,
+catch-up/recording only where a source lawfully publishes the required
+metadata, and broader real-device/browser acceptance. Passing CI or a single
+sample is not completion evidence for those items.

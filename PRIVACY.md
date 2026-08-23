@@ -28,9 +28,10 @@ The website stores the following data locally in browser storage:
 - cached catalogue metadata used for faster startup and stale-on-failure
   fallback.
 
-Guide data is held in memory while the application is open. Web Library export
-and import operate on files selected by the visitor and browser-local storage.
-They are not uploaded to Crow-Flix.
+Guide data and personal playlist additions are held in memory while the
+application is open. Web Library export/import and personal M3U/XMLTV file
+imports operate on files selected by the visitor and browser-local storage.
+Selected file contents are parsed locally and are not uploaded to Crow-Flix.
 
 To remove locally stored Crow-Flix data, clear site data for `crowflix.tv` in
 the browser. This removes local storage, Cache API entries, and ordinary browser
@@ -55,7 +56,9 @@ Depending on the feature used, the website can connect to:
 - external Web Library destinations opened by the visitor;
 - the Crow-Flix relay for programme guides and media that an HTTPS browser
   cannot load directly, including HTTP, CORS-blocked, redirected, byte-range,
-  DASH, or provider-header sources; and
+  DASH, or provider-header sources;
+- the Crow-Flix relay when the visitor explicitly imports a public personal
+  playlist or XMLTV URL; and
 - Cloudflare Turnstile when a visitor requests live programme-guide data.
 
 External providers apply their own availability, geographic, account, storage,
@@ -83,6 +86,7 @@ requests can include:
 - guide country, browser timezone, channel identifiers, and public channel names
   needed to match provider XMLTV identifiers;
 - media target information;
+- a public personal playlist or XMLTV URL explicitly supplied by the visitor;
 - provider-requested User-Agent or Referer values where required; and
 - ordinary HTTP headers supplied by Cloudflare and the browser.
 

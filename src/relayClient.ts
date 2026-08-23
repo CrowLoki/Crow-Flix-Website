@@ -43,6 +43,8 @@ export type RelayGuideChannel = {
 };
 
 const REQUEST_TIMEOUT_MS = 90_000;
+const FETCH_TEXT_TIMEOUT_MS = 35_000;
+export const MAX_RELAY_FETCH_TEXT_BYTES = 32 * 1024 * 1024;
 
 export async function loadRelayGuide(
   country: string,
@@ -245,16 +247,57 @@ export function logicalDashRequestUrl(
 }
 
 /** Bounded fetch of a user-supplied playlist/guide URL through the relay. */
-export async function relayFetchText(url: string): Promise<string> {
+export async function relayFetchText(
+  url: string,
+  maximumBytes = MAX_RELAY_FETCH_TEXT_BYTES,
+): Promise<string> {
+  const limit = Math.min(
+    MAX_RELAY_FETCH_TEXT_BYTES,
+    Math.max(1, Math.floor(maximumBytes)),
+  );
   const query = new URLSearchParams({ url });
-  const response = await fetch(`${RELAY_BASE}/fetch?${query}`);
-  if (!response.ok) {
-    let message = `Relay returned HTTP ${response.status}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TEXT_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${RELAY_BASE}/fetch?${query}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let message = `Relay returned HTTP ${response.status}`;
+      try {
+        const body = await response.json() as { error?: string };
+        if (body.error) message = body.error;
+      } catch { /* keep the status message */ }
+      throw new Error(message);
+    }
+    const declared = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > limit) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`That source exceeds the ${(limit / 1024 / 1024).toLocaleString()} MiB browser import limit.`);
+    }
+    if (!response.body) throw new Error("The source returned no readable content.");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let total = 0;
+    let output = "";
     try {
-      const body = await response.json() as { error?: string };
-      if (body.error) message = body.error;
-    } catch { /* keep the status message */ }
-    throw new Error(message);
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > limit) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error(`That source exceeds the ${(limit / 1024 / 1024).toLocaleString()} MiB browser import limit.`);
+        }
+        output += decoder.decode(value, { stream: true });
+      }
+      output += decoder.decode();
+      return output;
+    } finally {
+      reader.releaseLock();
+    }
+  } finally {
+    clearTimeout(timer);
   }
-  return response.text();
 }
