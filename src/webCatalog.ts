@@ -17,6 +17,7 @@ import { RELAY_BASE } from "./relayClient";
 import {
   isFreshCatalogHealth,
   loadStreamHealthIndex,
+  sourceUsesLiteralIp,
   streamSourceHealthIdentity,
 } from "./streamHealthIndex";
 
@@ -231,7 +232,8 @@ function sourcePreferenceScore(source: StreamSource, now = Date.now()): number {
   const transportScore = source.transport === "hls" ? 400
     : source.transport === "direct" ? 300
       : source.transport === "dash" ? 100 : 200;
-  const httpsScore = source.isHttps ? 40 : 0;
+  const browserDeliveryScore = sourceUsesLiteralIp(source) ? 0
+    : source.isHttps ? 4_000 : 1_000;
   const qualityScore = Math.min(Math.floor(qualityHeight(source.quality) / 60), 72);
   const availabilityScore = sourceAvailability(source.label) === "normal" ? 2_000
     : sourceAvailability(source.label) === "part-time" ? 1_000 : 0;
@@ -239,7 +241,7 @@ function sourcePreferenceScore(source: StreamSource, now = Date.now()): number {
     : source.catalogHealth.status === "online" ? 30_000 + source.catalogHealth.score * 10
       : source.catalogHealth.status === "blocked" ? 18_000
         : source.catalogHealth.status === "timeout" ? 5_000 : 0;
-  return healthScore + availabilityScore + transportScore + httpsScore + qualityScore;
+  return healthScore + availabilityScore + transportScore + browserDeliveryScore + qualityScore;
 }
 
 function sourceId(url: string, userAgent?: string | null, referrer?: string | null): string {

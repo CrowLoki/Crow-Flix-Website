@@ -90,6 +90,11 @@ An `online` hint improves source order, while a recent `offline`, `timeout`, or
 CrowFlix preflight or successful playback always takes priority, and failure of
 the optional index leaves the normal catalogue path working.
 
+A remote `online` result for a literal-IP feed remains available but does not
+receive the same browser-ranking boost as a hostname-based source. Those feeds
+often work from the scanner's network while rejecting the Cloudflare relay an
+HTTPS browser needs, so CrowFlix waits for local evidence before promoting them.
+
 Live programme-guide requests use Cloudflare Turnstile in Managed mode. The
 browser obtains a one-time `epg_load` token, and the relay validates it through
 Siteverify with exact action and hostname checks before performing guide

@@ -120,7 +120,7 @@ for (const value of ["OPTIONAL_FAST_PLAYLISTS", "overlayAmagiFastFallbacks", "lo
 }
 
 const streamHealth = await readFile(path.join(repositoryRoot, "src", "streamHealthIndex.ts"), "utf8");
-for (const value of ["streams.json.gz", "DecompressionStream", "MAX_COMPRESSED_BYTES", "MAX_DECOMPRESSED_BYTES", "streamHealthIdentity", "STREAM_HEALTH_TTL_MS"]) {
+for (const value of ["streams.json.gz", "DecompressionStream", "MAX_COMPRESSED_BYTES", "MAX_DECOMPRESSED_BYTES", "streamHealthIdentity", "catalogHealthSupportsBrowserRanking", "sourceUsesLiteralIp", "STREAM_HEALTH_TTL_MS"]) {
   assert(streamHealth.includes(value), `Whole-catalogue health safety is missing: ${value}`);
 }
 

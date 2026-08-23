@@ -3,7 +3,10 @@ import {
   isFreshPreflight,
   type SourcePreflight,
 } from "./preflight";
-import { isFreshCatalogHealth } from "../streamHealthIndex";
+import {
+  catalogHealthSupportsBrowserRanking,
+  isFreshCatalogHealth,
+} from "../streamHealthIndex";
 
 export const VERIFIED_AVAILABILITY_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -147,8 +150,8 @@ export function channelReliabilityScore(
   ).length;
   const catalogHealthScore = channel.sources.reduce((maximum, source) => {
     const health = source.catalogHealth;
-    return isFreshCatalogHealth(health, now) && health.status === "online"
-      ? Math.max(maximum, Math.round(health.score * 90))
+    return catalogHealthSupportsBrowserRanking(source, now)
+      ? Math.max(maximum, Math.round((health?.score || 0) * 90))
       : maximum;
   }, 0);
   return availabilityScore

@@ -160,6 +160,25 @@ describe("buildCatalogFromApi", () => {
     expect(catalog.channels[0].url).toBe("https://cdn.example.com/working.m3u8");
   });
 
+  it("prefers an online HTTPS source over a higher-scored literal-IP HTTP feed", () => {
+    const now = Date.parse("2026-08-23T01:00:00.000Z");
+    const ip = "http://45.162.64.114/live.m3u8";
+    const https = "https://provider.test/live.m3u8";
+    const catalog = buildCatalogFromApi(payload({
+      channels: [{ id: "News.us", name: "Crow News", country: "US" }],
+      streams: [
+        { channel: "News.us", title: "IP feed", url: ip },
+        { channel: "News.us", title: "HTTPS feed", url: https },
+      ],
+    }));
+    applyStreamHealthHints(catalog.channels, new Map([
+      [streamHealthIdentity(ip), { status: "online", score: 100, checkedAt: now - 1 }],
+      [streamHealthIdentity(https), { status: "online", score: 85, checkedAt: now - 1 }],
+    ]), now);
+
+    expect(catalog.channels[0].url).toBe(https);
+  });
+
   it("deprioritises geo-blocked sources in ordering", () => {
     const catalog = buildCatalogFromApi(payload({
       channels: [{ id: "News.us", name: "Crow News", country: "US" }],
