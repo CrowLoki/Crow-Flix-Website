@@ -22,6 +22,8 @@ answer a request.
 The website stores the following data locally in browser storage:
 
 - favourite and recently opened channel identifiers;
+- the optional CrowFlix helper's local suggestion state, calculated only from
+  those recently opened channel identifiers;
 - user-managed Web Library destinations;
 - source-health, cooldown, and preferred-source results created only while a
   visitor is playing a selected channel; and
@@ -78,6 +80,10 @@ CrowFlix does not send searches, favourites, recent channels, Web Library data,
 or a list of the visitor's channels to IPTV Nexus. The index can only annotate
 an exact URL-and-header identity already present in the current IPTV-org data;
 it cannot add or replace a stream by itself.
+
+The optional animated CrowFlix helper does not use an external AI service or
+analytics profile. Its suggestions are calculated in the browser from recent
+channel identifiers already stored on that device.
 
 ## Crow-Flix relay
 

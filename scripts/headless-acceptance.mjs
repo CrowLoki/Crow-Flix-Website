@@ -159,11 +159,29 @@ try {
         && !home.includes('Live sports');
     })(),
     enlargedClawCursor: getComputedStyle(document.documentElement).cursor.includes('/cursors/40/normal.png'),
+    helper: Boolean(document.querySelector('.crow-guide-avatar')),
     desktopDownload: document.body.innerText.includes('Download Crow-Flix for Windows'),
     status: document.querySelector('.status-bar')?.innerText || ''
   })`);
+  await evaluate("document.querySelector('.crow-guide-avatar')?.click()");
+  await waitFor("Boolean(document.querySelector('.crow-guide-bubble'))");
+  const helper = await evaluate(`({
+    localOnly: document.querySelector('.crow-guide-bubble')?.innerText.includes('stay on this device') || false,
+    suggested: Boolean(document.querySelector('.crow-guide-action'))
+  })`);
+  await evaluate("document.querySelector('.crow-guide-bubble button[aria-label]')?.click()");
+  await waitFor("!document.querySelector('.crow-guide-bubble')");
   await evaluate(`[...document.querySelectorAll('.topbar nav button')].find((button) => button.textContent.includes('Live TV'))?.click()`);
   await waitFor("document.querySelectorAll('.browse-results .channel-card').length === 48");
+  await evaluate("document.querySelector('.browse-sidebar > button')?.click()");
+  await waitFor("Boolean(document.querySelector('.explore-popout'))");
+  const explore = await evaluate(`({
+    title: document.querySelector('.explore-popout header')?.innerText || '',
+    options: document.querySelectorAll('.explore-popout-options > button').length,
+    overlay: getComputedStyle(document.querySelector('.explore-popout')).position === 'absolute'
+  })`);
+  await evaluate("document.querySelector('.explore-popout button[aria-label]')?.click()");
+  await waitFor("!document.querySelector('.explore-popout')");
   const live = await evaluate(`({
     cards: document.querySelectorAll('.browse-results .channel-card').length,
     providers: document.body.innerText.includes('Source providers'),
@@ -175,6 +193,14 @@ try {
     .map((entry) => entry.name)
     .filter((url) => /(?:\\.m3u8|\\.mpd)(?:[?#]|$)|\\/playback(?:[/?]|$)/i.test(url))
     .filter((url) => !/\\/raw-tv\\.m3u8(?:[?#]|$)/i.test(decodeURIComponent(url)))`);
+  await evaluate("document.querySelector('.browse-results .channel-card')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))");
+  await waitFor("Boolean(document.querySelector('.channel-preview'))", 5_000);
+  const hoverPreview = await evaluate(`({
+    muted: document.querySelector('.channel-preview video')?.muted === true,
+    label: document.querySelector('.channel-preview span')?.textContent || ''
+  })`);
+  await evaluate("document.querySelector('.browse-results .channel-card')?.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }))");
+  await waitFor("!document.querySelector('.channel-preview')");
   await evaluate("document.querySelector('.browse-results .details-button')?.click()");
   await waitFor("Boolean(document.querySelector('.channel-details'))");
   const details = await evaluate(`({
@@ -250,9 +276,12 @@ try {
   const playerStayedOpen = await evaluate("Boolean(document.querySelector('.player'))");
 
   const assertions = {
-    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.enlargedClawCursor && !home.desktopDownload,
+    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.enlargedClawCursor && home.helper && !home.desktopDownload,
+    crowGuide: helper.localOnly && helper.suggested,
+    explorePopout: explore.title.includes('Explore') && explore.options > 1 && explore.overlay,
     fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy && live.preferredOrder,
     noBackgroundStreamProbing: backgroundStreamRequests.length === 0,
+    hoverPreview: hoverPreview.muted && hoverPreview.label.length > 0,
     detailsDialog: details.channelId && details.sources && details.providers,
     personalSourcesDialog: sourceDialog.playlist && sourceDialog.guide,
     guideAudience: guideAudience.englishFirst && guideAudience.australiaFirst && guideAudience.unitedStatesSecond,
@@ -263,7 +292,7 @@ try {
     escapeClosesOverlayOnly: playerStayedOpen,
   };
   if (Object.values(assertions).some((value) => !value)) {
-    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, live, backgroundStreamRequests, details, sourceDialog, guideAudience, freeCollection, player, subtitleMenu, miniGuide })}`);
+    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, helper, explore, live, backgroundStreamRequests, hoverPreview, details, sourceDialog, guideAudience, freeCollection, player, subtitleMenu, miniGuide })}`);
   }
   console.log(JSON.stringify({
     ok: true,

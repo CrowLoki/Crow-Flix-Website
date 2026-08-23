@@ -97,6 +97,9 @@ const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
 for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", "CrowFlix Free", "Australia, United States & English first", "Australia / US / English first", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
+for (const value of ["HoverPreview", "CrowGuide", "explore-popout"]) {
+  assert(app.includes(value), `Requested CrowFlix interaction is missing: ${value}`);
+}
 
 const appCss = await readFile(path.join(repositoryRoot, "src", "App.css"), "utf8");
 assert(appCss.includes('/cursors/40/normal.png'), "CrowFlix does not use the requested enlarged claw cursor artwork");
@@ -226,7 +229,7 @@ assert(!headers.includes("script-src 'none'"), "_headers still disables the brow
 assert(!headers.includes("unsafe-eval"), "_headers permits unsafe-eval");
 
 const privacy = await readFile(path.join(repositoryRoot, "PRIVACY.md"), "utf8");
-for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "IPTV Nexus", "personal playlist or XMLTV URL", "does not attach search text", "does not probe or preload individual channel streams", "CrowFlix Free Collection", "clear site data for `crowflix.tv`"]) {
+for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "IPTV Nexus", "personal playlist or XMLTV URL", "does not attach search text", "does not probe or preload individual channel streams", "CrowFlix Free Collection", "does not use an external AI service", "clear site data for `crowflix.tv`"]) {
   assert(privacy.includes(value), `PRIVACY.md is missing: ${value}`);
 }
 
