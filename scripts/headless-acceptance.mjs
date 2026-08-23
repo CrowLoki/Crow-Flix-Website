@@ -161,6 +161,10 @@ try {
     owners: document.body.innerText.includes('Owners'),
     fullCopy: document.body.innerText.includes('complete matching catalogue stays visible')
   })`);
+  const backgroundStreamRequests = await evaluate(`performance.getEntriesByType('resource')
+    .map((entry) => entry.name)
+    .filter((url) => /(?:\\.m3u8|\\.mpd)(?:[?#]|$)|\\/playback(?:[/?]|$)/i.test(url))
+    .filter((url) => !/\\/raw-tv\\.m3u8(?:[?#]|$)/i.test(decodeURIComponent(url)))`);
   await evaluate("document.querySelector('.browse-results .details-button')?.click()");
   await waitFor("Boolean(document.querySelector('.channel-details'))");
   const details = await evaluate(`({
@@ -212,6 +216,7 @@ try {
   const assertions = {
     homeLoaded: home.cards > 0 && home.addSource && home.liveNav && !home.desktopDownload,
     fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy,
+    noBackgroundStreamProbing: backgroundStreamRequests.length === 0,
     detailsDialog: details.channelId && details.sources && details.providers,
     personalSourcesDialog: sourceDialog.playlist && sourceDialog.guide,
     playerControls: player.customControls && player.nativeControlsRemoved && player.settingsButton && player.guideButton && player.subtitleButton && player.fullscreenButton,
@@ -220,7 +225,7 @@ try {
     escapeClosesOverlayOnly: playerStayedOpen,
   };
   if (Object.values(assertions).some((value) => !value)) {
-    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, live, details, sourceDialog, player, subtitleMenu, miniGuide })}`);
+    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, live, backgroundStreamRequests, details, sourceDialog, player, subtitleMenu, miniGuide })}`);
   }
   console.log(JSON.stringify({
     ok: true,
