@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  catalogHealthSupportsBrowserRanking,
   loadStreamHealthIndex,
   parseStreamHealthEntries,
   STREAM_HEALTH_GZIP_URL,
   STREAM_HEALTH_MANIFEST_URL,
   streamHealthIdentity,
+  sourceUsesLiteralIp,
 } from "./streamHealthIndex";
 
 function record(
@@ -85,5 +87,17 @@ describe("stream health index", () => {
       vi.fn(),
     )).rejects.toThrow(/stale or invalid/);
     expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat remote health for a literal-IP feed as strong browser evidence", () => {
+    const now = 100_000;
+    const health = { status: "online" as const, score: 100, checkedAt: now - 1 };
+    const ipSource = { url: "http://45.162.64.114/live.m3u8", catalogHealth: health };
+    const hostSource = { url: "https://provider.test/live.m3u8", catalogHealth: health };
+
+    expect(sourceUsesLiteralIp(ipSource)).toBe(true);
+    expect(sourceUsesLiteralIp(hostSource)).toBe(false);
+    expect(catalogHealthSupportsBrowserRanking(ipSource, now)).toBe(false);
+    expect(catalogHealthSupportsBrowserRanking(hostSource, now)).toBe(true);
   });
 });

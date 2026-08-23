@@ -22,6 +22,9 @@ compressed and decompressed payloads validate, and each record matches an
 existing IPTV-org URL, Referer, and User-Agent exactly. Health data can change
 ordering or hide a recently failed source; it cannot introduce a new playback
 URL, override a successful local preflight, or bypass a provider restriction.
+Remote health for a literal-IP stream is not treated as strong browser
+reachability evidence because the website cannot load HTTP media directly and
+the provider can independently reject Cloudflare relay traffic.
 
 Live guide retrieval is protected by Cloudflare Turnstile with server-side
 Siteverify validation. Report any apparent token replay, hostname/action

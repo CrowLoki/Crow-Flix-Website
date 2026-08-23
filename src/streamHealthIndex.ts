@@ -66,6 +66,24 @@ export function isFreshCatalogHealth(
   );
 }
 
+export function sourceUsesLiteralIp(source: Pick<StreamSource, "url">): boolean {
+  try {
+    const hostname = new URL(source.url).hostname;
+    return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname) || hostname.includes(":");
+  } catch {
+    return false;
+  }
+}
+
+export function catalogHealthSupportsBrowserRanking(
+  source: StreamSource,
+  now = Date.now(),
+): boolean {
+  return isFreshCatalogHealth(source.catalogHealth, now)
+    && source.catalogHealth.status === "online"
+    && !sourceUsesLiteralIp(source);
+}
+
 export function parseStreamHealthEntries(
   candidate: unknown,
   now = Date.now(),

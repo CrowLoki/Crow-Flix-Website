@@ -128,6 +128,19 @@ describe("channel availability", () => {
       }, {}, now));
   });
 
+  it("does not boost literal-IP health results above an equally unknown browser route", () => {
+    const now = 100_000;
+    const onlineIp = {
+      ...source("http://45.162.64.114/online.m3u8"),
+      catalogHealth: { status: "online" as const, score: 100, checkedAt: now - 1 },
+    };
+    expect(channelReliabilityScore({ sources: [onlineIp] }, {}, now)).toBe(
+      channelReliabilityScore({
+        sources: [source("http://45.162.64.115/unknown.m3u8")],
+      }, {}, now),
+    );
+  });
+
   it("recognises negated geo labels as ordinary sources", () => {
     expect(channelAvailability({
       sources: [source("https://example.test/live.m3u8", "Non geo-blocked")],
