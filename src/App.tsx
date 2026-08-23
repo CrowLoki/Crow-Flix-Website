@@ -18,11 +18,17 @@ import {
   ArrowsClockwise,
   Broadcast,
   CalendarDots,
+  CaretDown,
   CaretLeft,
   CaretRight,
+  ClosedCaptioning,
+  CornersIn,
+  CornersOut,
   CheckCircle,
   Clock,
   CloudArrowUp,
+  DotsThreeVertical,
+  Gauge,
   GlobeHemisphereWest,
   Heart,
   House,
@@ -30,8 +36,12 @@ import {
   ListBullets,
   MagnifyingGlass,
   MapPin,
+  Pause,
+  PictureInPicture,
   Play,
   Plus,
+  SpeakerHigh,
+  SpeakerSlash,
   SpinnerGap,
   Television,
   Translate,
@@ -1099,7 +1109,16 @@ export default function App() {
         if (channel) zapTo(channel, `BACK · ${channel.name}`);
         return;
       }
-      if (event.key === "Escape") { event.preventDefault(); setPlaying(null); }
+      if (event.key === "Escape") {
+        if (
+          event.defaultPrevented
+          || document.fullscreenElement
+          || document.pictureInPictureElement
+          || document.querySelector('[data-player-overlay-open="true"]')
+        ) return;
+        event.preventDefault();
+        setPlaying(null);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
@@ -1130,7 +1149,7 @@ export default function App() {
         : view === "about"
           ? <footer className="status-bar"><span><Info weight="fill" /> CrowFlix 0.5.1</span><span>Copyright © 2026 Crow · AGPL-3.0-only</span></footer>
         : <footer className="status-bar"><span><Broadcast weight="fill" /> {catalog.channels.length.toLocaleString()} catalogued · {availabilitySummary.verified.toLocaleString()} live · {availabilitySummary.ready.toLocaleString()} ready · {sourceCount.toLocaleString()} sources</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
-      {playing && <Player channel={playing} now={currentProgramme(programmes, playing.id, clock)} next={nextProgramme(programmes, playing.id, clock)} playback={playback} videoRef={videoRef} zapNotice={zapNotice} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={() => setPlaying(null)} />}
+      {playing && <Player channel={playing} channels={rankedCatalogChannels} programmes={programmes} clock={clock} now={currentProgramme(programmes, playing.id, clock)} next={nextProgramme(programmes, playing.id, clock)} playback={playback} videoRef={videoRef} zapNotice={zapNotice} onOpenWebsite={(url, title) => void openWebsite(url, title)} onSelectChannel={(channel) => zapTo(channel, channel.name)} onStepChannel={zapStep} onClose={() => setPlaying(null)} />}
       {detailsChannel && <ChannelDetails channel={detailsChannel} now={currentProgramme(programmes, detailsChannel.id, clock)} next={nextProgramme(programmes, detailsChannel.id, clock)} favourite={favourites.includes(detailsChannel.key)} onPlay={(channel) => { closeChannelDetails(); play(channel); }} onFavourite={toggleFavourite} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={closeChannelDetails} />}
       {sourceOpen && <SourceDialog sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} epgUrl={epgUrl} setEpgUrl={setEpgUrl} loading={loading || guideLoading} onClose={closeSourceDialog} onPlaylistUrl={() => void importPlaylistUrl()} onPlaylistFile={(file) => void importPlaylistFile(file)} onEpgUrl={() => void importEpgUrl()} onEpgFile={(file) => void importEpgFile(file)} />}
       {toast && <div className="toast"><CheckCircle weight="fill" />{toast}</div>}
@@ -1468,25 +1487,52 @@ function ChannelDetails({ channel, now, next, favourite, onPlay, onFavourite, on
   </div>;
 }
 
+type PlayerMenuPage = "subtitles" | "quality" | "audio" | "speed" | "source" | null;
+
+const PLAYER_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+function formatPlaybackTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const whole = Math.floor(seconds);
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor((whole % 3600) / 60);
+  const remainder = whole % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+    : `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
 function Player({
   channel,
+  channels,
+  programmes,
+  clock,
   now,
   next,
   playback,
   videoRef,
   zapNotice,
   onOpenWebsite,
+  onSelectChannel,
+  onStepChannel,
   onClose,
 }: {
   channel: Channel;
+  channels: Channel[];
+  programmes: Programme[];
+  clock: Date;
   now?: Programme;
   next?: Programme;
   playback: PlaybackController;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   zapNotice: string;
   onOpenWebsite: (url: string, title: string) => void;
+  onSelectChannel: (channel: Channel) => void;
+  onStepChannel: (direction: 1 | -1) => void;
   onClose: () => void;
 }) {
+  const playerRef = useRef<HTMLDivElement | null>(null);
+  const availabilityByChannel = useContext(PlaybackAvailabilityContext);
   const source = playback.source;
   const externalOnly = channelSources(channel).length > 0
     && channelSources(channel).every((candidate) => classifySource(candidate) === "unsupported");
@@ -1494,24 +1540,169 @@ function Player({
   const busy = playback.status === "loading" || playback.status === "switching";
   const [chromeVisible, setChromeVisible] = useState(true);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [menuPage, setMenuPage] = useState<PlayerMenuPage>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [guideQuery, setGuideQuery] = useState("");
+  const [paused, setPaused] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [pictureInPicture, setPictureInPicture] = useState(false);
   const chromeTimer = useRef<number | undefined>(undefined);
-  const interactive = sourcesOpen || busy || playback.status === "failed" || playback.status === "interaction-required";
+  const overlayOpen = sourcesOpen || settingsOpen || guideOpen;
+  const interactive = overlayOpen || paused || busy || playback.status === "failed" || playback.status === "interaction-required";
+  const hasFiniteDuration = Number.isFinite(duration) && duration > 0;
+  const activeSubtitle = playback.subtitleOptions.find((option) => option.active)?.label || "Off";
+  const activeQuality = playback.qualityOptions.find((option) => option.active)?.label || "Auto";
+  const activeAudio = playback.audioOptions.find((option) => option.active)?.label || "Default";
+
+  const guideProgrammeByChannel = useMemo(() => {
+    const active = new Map<string, Programme>();
+    const time = clock.getTime();
+    for (const programme of programmes) {
+      if (
+        !active.has(programme.channelId)
+        && new Date(programme.start).getTime() <= time
+        && new Date(programme.stop).getTime() > time
+      ) active.set(programme.channelId, programme);
+    }
+    return active;
+  }, [clock, programmes]);
+  const guideChannels = useMemo(() => {
+    const term = guideQuery.trim().toLocaleLowerCase();
+    if (term) {
+      return channels.filter((candidate) => [
+        candidate.name,
+        ...(candidate.altNames || []),
+        candidate.network || "",
+        ...(candidate.owners || []),
+        countryName(candidate.country),
+      ].some((value) => value.toLocaleLowerCase().includes(term))).slice(0, 40);
+    }
+    if (!channels.length) return [];
+    const start = Math.max(0, channels.findIndex((candidate) => candidate.key === channel.key));
+    return Array.from(
+      { length: Math.min(30, channels.length) },
+      (_, offset) => channels[(start + offset) % channels.length],
+    );
+  }, [channel.key, channels, guideQuery]);
+
   const wake = useCallback(() => {
     setChromeVisible(true);
     window.clearTimeout(chromeTimer.current);
     chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 3200);
   }, []);
+  const togglePlayback = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) void video.play().catch(() => undefined);
+    else video.pause();
+  }, [videoRef]);
+  const toggleMute = useCallback(() => {
+    const video = videoRef.current;
+    if (video) video.muted = !video.muted;
+  }, [videoRef]);
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    else if (playerRef.current?.requestFullscreen) void playerRef.current.requestFullscreen().catch(() => undefined);
+  }, []);
+  const togglePictureInPicture = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !document.pictureInPictureEnabled || !video.requestPictureInPicture) return;
+    if (document.pictureInPictureElement) void document.exitPictureInPicture().catch(() => undefined);
+    else void video.requestPictureInPicture().catch(() => undefined);
+  }, [videoRef]);
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    setMenuPage(null);
+  }, []);
+
   useEffect(() => {
     wake();
-    window.addEventListener("mousemove", wake);
+    window.addEventListener("pointermove", wake);
     window.addEventListener("keydown", wake);
     return () => {
-      window.removeEventListener("mousemove", wake);
+      window.removeEventListener("pointermove", wake);
       window.removeEventListener("keydown", wake);
       window.clearTimeout(chromeTimer.current);
     };
   }, [wake]);
-  useEffect(() => setSourcesOpen(false), [channel.key]);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+    const syncPlayback = () => setPaused(video.paused);
+    const syncVolume = () => { setMuted(video.muted); setVolume(video.volume); };
+    const syncTime = () => { setCurrentTime(video.currentTime || 0); setDuration(video.duration || 0); };
+    const syncRate = () => setPlaybackRate(video.playbackRate || 1);
+    const syncFullscreen = () => setFullscreen(document.fullscreenElement === playerRef.current);
+    const onEnterPictureInPicture = () => setPictureInPicture(true);
+    const onLeavePictureInPicture = () => setPictureInPicture(false);
+    syncPlayback();
+    syncVolume();
+    syncTime();
+    syncRate();
+    syncFullscreen();
+    video.addEventListener("play", syncPlayback);
+    video.addEventListener("playing", syncPlayback);
+    video.addEventListener("pause", syncPlayback);
+    video.addEventListener("volumechange", syncVolume);
+    video.addEventListener("timeupdate", syncTime);
+    video.addEventListener("durationchange", syncTime);
+    video.addEventListener("loadedmetadata", syncTime);
+    video.addEventListener("ratechange", syncRate);
+    video.addEventListener("enterpictureinpicture", onEnterPictureInPicture);
+    video.addEventListener("leavepictureinpicture", onLeavePictureInPicture);
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => {
+      video.removeEventListener("play", syncPlayback);
+      video.removeEventListener("playing", syncPlayback);
+      video.removeEventListener("pause", syncPlayback);
+      video.removeEventListener("volumechange", syncVolume);
+      video.removeEventListener("timeupdate", syncTime);
+      video.removeEventListener("durationchange", syncTime);
+      video.removeEventListener("loadedmetadata", syncTime);
+      video.removeEventListener("ratechange", syncRate);
+      video.removeEventListener("enterpictureinpicture", onEnterPictureInPicture);
+      video.removeEventListener("leavepictureinpicture", onLeavePictureInPicture);
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+    };
+  }, [channel.key, videoRef]);
+  useEffect(() => {
+    const onPlayerKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName) || target.isContentEditable)) return;
+      if (event.key === "Escape" && overlayOpen) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setSourcesOpen(false);
+        closeSettings();
+        setGuideOpen(false);
+        return;
+      }
+      const key = event.key.toLocaleLowerCase();
+      if (event.code === "Space" || key === "k") togglePlayback();
+      else if (key === "m") toggleMute();
+      else if (key === "f") toggleFullscreen();
+      else if (key === "g") { setGuideOpen((open) => !open); setSourcesOpen(false); closeSettings(); }
+      else if (key === "c" && playback.subtitleOptions.length > 1) {
+        playback.selectSubtitle(activeSubtitle === "Off" ? playback.subtitleOptions[1].id : "off");
+      } else return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", onPlayerKeyDown, true);
+    return () => window.removeEventListener("keydown", onPlayerKeyDown, true);
+  }, [activeSubtitle, closeSettings, overlayOpen, playback, toggleFullscreen, toggleMute, togglePlayback]);
+  useEffect(() => {
+    setSourcesOpen(false);
+    closeSettings();
+    setGuideOpen(false);
+    setGuideQuery("");
+  }, [channel.key, closeSettings]);
   useEffect(() => {
     if (interactive || zapNotice) {
       setChromeVisible(true);
@@ -1520,17 +1711,34 @@ function Player({
       wake();
     }
   }, [interactive, zapNotice, wake]);
+
   let channelWebsite = "";
   try {
-    channelWebsite = channel.website
-      ? normalizeExternalHttpUrl(channel.website)
-      : "";
+    channelWebsite = channel.website ? normalizeExternalHttpUrl(channel.website) : "";
   } catch {
     channelWebsite = "";
   }
-  return <div className={chromeVisible ? "player" : "player chrome-hidden"}>
+
+  const menuTitle = menuPage === "subtitles" ? "Subtitles"
+    : menuPage === "quality" ? "Streaming quality"
+    : menuPage === "audio" ? "Audio language"
+    : menuPage === "speed" ? "Playback speed"
+    : "Playback source";
+  const unavailableCopy = menuPage === "subtitles" && playback.subtitleOptions.length === 1
+    ? "This channel is not supplying a subtitle track."
+    : menuPage === "quality" && playback.qualityOptions.length === 1
+      ? "This source is supplying one fixed stream quality."
+      : menuPage === "audio" && playback.audioOptions.length === 1
+        ? "This source is supplying one audio track."
+        : "";
+
+  return <div
+    ref={playerRef}
+    className={chromeVisible ? "player" : "player chrome-hidden"}
+    data-player-overlay-open={overlayOpen ? "true" : undefined}
+  >
     <div className="player-ambient" />
-    <video ref={videoRef} controls autoPlay playsInline poster={MASCOT_IMAGE} />
+    <video ref={videoRef} autoPlay playsInline poster={MASCOT_IMAGE} onClick={togglePlayback} onDoubleClick={toggleFullscreen} />
     <div className="player-shade" />
     <div className="player-top">
       <button onClick={onClose}><CaretLeft /> Back to CrowFlix</button>
@@ -1541,21 +1749,49 @@ function Player({
         aria-controls="playback-source-options"
         disabled={playback.sourceOptions.length === 0}
         title="Choose a playback source"
-        onClick={() => setSourcesOpen((open) => !open)}
+        onClick={() => { setSourcesOpen((open) => !open); closeSettings(); setGuideOpen(false); }}
       >
         {playback.sourceTotal > 0 && <span>Route {playback.sourceNumber}/{playback.sourceTotal}</span>}
         <i className={playback.status === "playing" ? "online" : ""} />
         {playback.status === "playing" ? "Live" : titleCase(playback.status)}
       </button>
       {playback.canNext && <button className="player-next-source" onClick={playback.next} title="Try the next playback route">Next route <CaretRight /></button>}
-      <div className="player-brand"><img src={BRAND_ICON} alt="" />CROW<strong>FLIX</strong></div>
+      <button
+        className="player-brand"
+        aria-expanded={guideOpen}
+        aria-controls="player-mini-guide"
+        title="Open the channel guide"
+        onClick={() => { setGuideOpen((open) => !open); setSourcesOpen(false); closeSettings(); }}
+      ><img src={BRAND_ICON} alt="" /><span>CROW<strong>FLIX</strong></span><CaretDown /></button>
     </div>
     {sourcesOpen && playback.sourceOptions.length > 0 && <section id="playback-source-options" className="source-chooser" aria-label="Playback sources">
       <div><strong>Playback sources</strong><span>Choose any preserved feed or delivery route.</span></div>
       <div className="source-options">{playback.sourceOptions.map((option) => <button key={`${option.sourceId}-${option.index}`} className={option.active ? "active" : ""} onClick={() => { playback.selectSource(option.index); setSourcesOpen(false); }}><span><strong>{option.label}</strong><small>{option.detail}</small></span><b>{option.active ? "NOW" : `TRY ${option.index + 1}`}</b></button>)}</div>
     </section>}
+    {guideOpen && <section id="player-mini-guide" className="player-mini-guide" aria-label="Channel guide">
+      <div className="mini-guide-head">
+        <span><Broadcast weight="fill" /><strong>Live channel guide</strong></span>
+        <button aria-label="Close channel guide" onClick={() => setGuideOpen(false)}><X /></button>
+      </div>
+      <div className="mini-guide-zap">
+        <button onClick={() => onStepChannel(-1)}><CaretLeft /> Previous channel</button>
+        <button onClick={() => onStepChannel(1)}>Next channel <CaretRight /></button>
+      </div>
+      <label className="mini-guide-search"><MagnifyingGlass /><input autoFocus value={guideQuery} onChange={(event) => setGuideQuery(event.target.value)} placeholder="Search channels, networks or countries" />{guideQuery && <button aria-label="Clear channel search" onClick={() => setGuideQuery("")}><X /></button>}</label>
+      <div className="mini-guide-list">
+        {guideChannels.map((candidate) => {
+          const programme = guideProgrammeByChannel.get(candidate.id);
+          const availability = availabilityByChannel[candidate.key] || "unverified";
+          return <button key={candidate.key} className={candidate.key === channel.key ? "active" : ""} onClick={() => { setGuideOpen(false); onSelectChannel(candidate); }}>
+            <img src={candidate.logo || BRAND_ICON} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; }} />
+            <span><strong>{candidate.name}</strong><small>{programme?.title || "Live broadcast"}</small></span>
+            <b className={`availability-${availability}`}>{candidate.key === channel.key ? "NOW" : availabilityLabel(availability)}</b>
+          </button>;
+        })}
+        {!guideChannels.length && <p>No channels match that search.</p>}
+      </div>
+    </section>}
     {zapNotice && <div className="zap-osd" role="status">{zapNotice}</div>}
-    <div className="player-keys" aria-hidden="true">↑↓ Channel · 0-9 Direct · L Last · Esc Close</div>
     <div className="player-info">
       <span className="overline"><Broadcast weight="fill" /> Live · {countryName(channel.country)}</span>
       <h1>{now?.title || channel.name}</h1>
@@ -1570,6 +1806,44 @@ function Player({
       {channelWebsite && <button className="player-website" onClick={() => onOpenWebsite(channelWebsite, channel.name)}><ArrowSquareOut weight="bold" /> Open {new URL(channelWebsite).hostname.replace(/^www\./i, "")}</button>}
       {next && <div className="up-next"><Clock /><span><small>UP NEXT · {formatTime(new Date(next.start))}</small><strong>{next.title}</strong></span></div>}
     </div>
+    <div className="player-controls" onPointerDown={(event) => event.stopPropagation()}>
+      {hasFiniteDuration
+        ? <input className="player-progress" type="range" min="0" max={duration} step="0.1" value={Math.min(currentTime, duration)} aria-label="Playback position" onChange={(event) => { if (videoRef.current) videoRef.current.currentTime = Number(event.target.value); }} />
+        : <div className="player-live-progress"><span /></div>}
+      <div className="player-control-row">
+        <button aria-label={paused ? "Play" : "Pause"} title={paused ? "Play (Space)" : "Pause (Space)"} onClick={togglePlayback}>{paused ? <Play weight="fill" /> : <Pause weight="fill" />}</button>
+        <button aria-label={muted ? "Unmute" : "Mute"} title={muted ? "Unmute (M)" : "Mute (M)"} onClick={toggleMute}>{muted || volume === 0 ? <SpeakerSlash /> : <SpeakerHigh />}</button>
+        <input className="player-volume" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label="Volume" onChange={(event) => { const video = videoRef.current; if (!video) return; video.volume = Number(event.target.value); video.muted = false; }} />
+        <span className="player-time">{hasFiniteDuration ? `${formatPlaybackTime(currentTime)} / ${formatPlaybackTime(duration)}` : "LIVE"}</span>
+        <span className="player-control-spacer" />
+        <button aria-label="Open channel guide" title="Channel guide (G)" className={guideOpen ? "active" : ""} onClick={() => { setGuideOpen((open) => !open); closeSettings(); setSourcesOpen(false); }}><CalendarDots /></button>
+        <button aria-label="Subtitles" title="Subtitles (C)" className={activeSubtitle !== "Off" ? "active" : ""} onClick={() => { setSettingsOpen(true); setMenuPage("subtitles"); setGuideOpen(false); setSourcesOpen(false); }}><ClosedCaptioning weight={activeSubtitle !== "Off" ? "fill" : "regular"} /></button>
+        <button aria-label={pictureInPicture ? "Close picture in picture" : "Picture in picture"} title="Picture in picture" className={pictureInPicture ? "active" : ""} onClick={togglePictureInPicture}><PictureInPicture /></button>
+        <button aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"} title={fullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)"} onClick={toggleFullscreen}>{fullscreen ? <CornersIn /> : <CornersOut />}</button>
+        <button aria-label="Playback settings" title="Playback settings" aria-expanded={settingsOpen} className={settingsOpen ? "active" : ""} onClick={() => { setSettingsOpen((open) => !open); setMenuPage(null); setGuideOpen(false); setSourcesOpen(false); }}><DotsThreeVertical weight="bold" /></button>
+      </div>
+    </div>
+    {settingsOpen && <div className="player-settings" role="dialog" aria-label="Playback settings">
+      <div className="player-settings-main">
+        <button onClick={() => setMenuPage("subtitles")}><ClosedCaptioning /><span><strong>Subtitles</strong><small>{activeSubtitle}</small></span><CaretLeft /></button>
+        <button onClick={() => setMenuPage("quality")}><Gauge /><span><strong>Streaming quality</strong><small>{activeQuality}</small></span><CaretLeft /></button>
+        <button onClick={() => setMenuPage("audio")}><SpeakerHigh /><span><strong>Audio language</strong><small>{activeAudio}</small></span><CaretLeft /></button>
+        <button onClick={() => setMenuPage("speed")}><Play /><span><strong>Playback speed</strong><small>{playbackRate === 1 ? "Normal" : `${playbackRate}×`}</small></span><CaretLeft /></button>
+        <button onClick={() => setMenuPage("source")}><Broadcast /><span><strong>Playback source</strong><small>{playback.sourceTotal ? `Route ${playback.sourceNumber} of ${playback.sourceTotal}` : "Unavailable"}</small></span><CaretLeft /></button>
+        <button disabled={!document.pictureInPictureEnabled} onClick={() => { togglePictureInPicture(); closeSettings(); }}><PictureInPicture /><span><strong>Picture in picture</strong><small>{document.pictureInPictureEnabled ? (pictureInPicture ? "Close floating player" : "Open floating player") : "Not available in this browser"}</small></span></button>
+      </div>
+      {menuPage && <div className="player-settings-submenu">
+        <header><button aria-label="Back to playback settings" onClick={() => setMenuPage(null)}><CaretRight /></button><strong>{menuTitle}</strong></header>
+        <div>
+          {menuPage === "subtitles" && playback.subtitleOptions.map((option) => <button key={option.id} className={option.active ? "active" : ""} onClick={() => playback.selectSubtitle(option.id)}><span><strong>{option.label}</strong>{option.detail && <small>{option.detail}</small>}</span>{option.active && <CheckCircle weight="fill" />}</button>)}
+          {menuPage === "quality" && playback.qualityOptions.map((option) => <button key={option.id} className={option.active ? "active" : ""} onClick={() => playback.selectQuality(option.id)}><span><strong>{option.label}</strong>{option.detail && <small>{option.detail}</small>}</span>{option.active && <CheckCircle weight="fill" />}</button>)}
+          {menuPage === "audio" && playback.audioOptions.map((option) => <button key={option.id} className={option.active ? "active" : ""} onClick={() => playback.selectAudio(option.id)}><span><strong>{option.label}</strong>{option.detail && <small>{option.detail}</small>}</span>{option.active && <CheckCircle weight="fill" />}</button>)}
+          {menuPage === "speed" && PLAYER_SPEEDS.map((speed) => <button key={speed} className={playbackRate === speed ? "active" : ""} onClick={() => { if (videoRef.current) videoRef.current.playbackRate = speed; }}><span><strong>{speed === 1 ? "Normal" : `${speed}×`}</strong></span>{playbackRate === speed && <CheckCircle weight="fill" />}</button>)}
+          {menuPage === "source" && playback.sourceOptions.map((option) => <button key={`${option.sourceId}-${option.index}`} className={option.active ? "active" : ""} onClick={() => playback.selectSource(option.index)}><span><strong>{option.label}</strong><small>{option.detail}</small></span>{option.active && <CheckCircle weight="fill" />}</button>)}
+          {unavailableCopy && <p>{unavailableCopy}</p>}
+        </div>
+      </div>}
+    </div>}
     {busy && <div className="player-status" aria-live="polite">
       <SpinnerGap className="spin" />
       <strong>{playback.status === "switching" ? "Finding a working source" : "Starting live playback"}</strong>
