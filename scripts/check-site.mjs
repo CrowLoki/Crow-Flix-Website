@@ -92,7 +92,7 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 
@@ -107,7 +107,7 @@ for (const value of ["LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT", "LIVE_CARD_PREFLIGHT_S
 }
 
 const playbackController = await readFile(path.join(repositoryRoot, "src", "playback", "usePlaybackController.ts"), "utf8");
-for (const value of ['import("hls.js")', 'import("dashjs")', "reorderRemainingSources", "orderSourcesByPreflight", "sourceOptions", "selectSource", "Trying the next playback route"]) {
+for (const value of ['import("hls.js")', 'import("dashjs")', "reorderRemainingSources", "orderSourcesByPreflight", "sourceOptions", "subtitleOptions", "qualityOptions", "audioOptions", "selectSource", "selectSubtitle", "selectQuality", "Trying the next playback route"]) {
   assert(playbackController.includes(value), `Dynamic playback failover is missing: ${value}`);
 }
 assert(!/^import Hls from "hls\.js";/m.test(playbackController), "HLS.js is still bundled into initial page startup");

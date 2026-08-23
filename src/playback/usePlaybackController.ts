@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type Hls from "hls.js";
-import type { MediaPlayerClass } from "dashjs";
+import type { MediaInfo, MediaPlayerClass, Representation } from "dashjs";
 import { createTauriHlsLoader } from "./TauriHlsLoader";
 import { installNativeDashTransport } from "./dashTransport";
 import {
@@ -44,6 +44,82 @@ function isManifestNetworkFailure(details: unknown): boolean {
   return /manifest|level|playlist|track|steering/i.test(String(details ?? ""));
 }
 
+function displayLanguage(value?: string | null): string {
+  const language = value?.trim();
+  if (!language) return "";
+  try {
+    return new Intl.DisplayNames(undefined, { type: "language" }).of(language) || language;
+  } catch {
+    return language;
+  }
+}
+
+function selectableTextTracks(textTracks: TextTrackList): Array<{ track: TextTrack; index: number }> {
+  return Array.from(textTracks)
+    .map((track, index) => ({ track, index }))
+    .filter(({ track }) => track.kind === "subtitles" || track.kind === "captions");
+}
+
+function textTrackIdentity(label?: string | null, language?: string | null): string {
+  return `${label?.trim().toLocaleLowerCase() || ""}\u0000${language?.trim().toLocaleLowerCase().split("-")[0] || ""}`;
+}
+
+function bitrateLabel(bitsPerSecond: number): string {
+  if (!Number.isFinite(bitsPerSecond) || bitsPerSecond <= 0) return "";
+  return bitsPerSecond >= 1_000_000
+    ? `${(bitsPerSecond / 1_000_000).toFixed(bitsPerSecond >= 10_000_000 ? 0 : 1)} Mbps`
+    : `${Math.round(bitsPerSecond / 1_000)} kbps`;
+}
+
+function qualityLabel(height: number, name: string | undefined, bitrate: number): string {
+  if (height > 0) return `${height}p`;
+  if (name?.trim()) return name.trim();
+  return bitrateLabel(bitrate) || "Stream quality";
+}
+
+function qualityDetail(width: number, height: number, bitrate: number): string | undefined {
+  return [
+    width > 0 && height > 0 ? `${width}×${height}` : "",
+    bitrateLabel(bitrate),
+  ].filter(Boolean).join(" · ") || undefined;
+}
+
+function dashQualityOption(representation: Representation, selected: string) {
+  const id = `dash-quality-${representation.id}`;
+  return {
+    id,
+    label: qualityLabel(representation.height, "", representation.bandwidth),
+    detail: qualityDetail(representation.width, representation.height, representation.bandwidth),
+    active: selected === id,
+    sort: representation.height || representation.bandwidth,
+  };
+}
+
+function sameDashTrack(left: MediaInfo, right: MediaInfo | null): boolean {
+  if (!right) return false;
+  if (left.id !== null && right.id !== null) return left.id === right.id;
+  return left.index === right.index && left.lang === right.lang && left.type === right.type;
+}
+
+function dashTrackOption(
+  track: MediaInfo,
+  id: string,
+  active: boolean,
+  fallback: string,
+): PlaybackMediaOption {
+  const language = displayLanguage(track.lang);
+  const label = track.labels.find((item) => item.lang === track.lang)?.text
+    || track.labels[0]?.text
+    || language
+    || `${fallback} ${track.index === null ? "" : track.index + 1}`.trim();
+  return {
+    id,
+    label,
+    detail: [language, track.codec || ""].filter(Boolean).join(" · ") || undefined,
+    active,
+  };
+}
+
 export type PlaybackChannel = {
   key: string;
   name: string;
@@ -58,6 +134,9 @@ export type PlaybackControllerState = {
   sourceTotal: number;
   canNext: boolean;
   sourceOptions: PlaybackSourceOption[];
+  subtitleOptions: PlaybackMediaOption[];
+  qualityOptions: PlaybackMediaOption[];
+  audioOptions: PlaybackMediaOption[];
   diagnostics: PlaybackDiagnostic[];
 };
 
@@ -69,10 +148,20 @@ export type PlaybackSourceOption = {
   active: boolean;
 };
 
+export type PlaybackMediaOption = {
+  id: string;
+  label: string;
+  detail?: string;
+  active: boolean;
+};
+
 export type PlaybackController = PlaybackControllerState & {
   retry: () => void;
   next: () => void;
   selectSource: (index: number) => void;
+  selectSubtitle: (id: string) => void;
+  selectQuality: (id: string) => void;
+  selectAudio: (id: string) => void;
   resume: () => void;
 };
 
@@ -84,6 +173,9 @@ const IDLE_STATE: PlaybackControllerState = {
   sourceTotal: 0,
   canNext: false,
   sourceOptions: [],
+  subtitleOptions: [{ id: "off", label: "Off", active: true }],
+  qualityOptions: [{ id: "auto", label: "Auto", detail: "Source default", active: true }],
+  audioOptions: [{ id: "default", label: "Default audio", active: true }],
   diagnostics: [],
 };
 
@@ -116,6 +208,9 @@ export function usePlaybackController(
     retry: useCallback(() => runRef.current?.retry(), []),
     next: useCallback(() => runRef.current?.next(), []),
     selectSource: useCallback((index: number) => runRef.current?.select(index), []),
+    selectSubtitle: useCallback((id: string) => runRef.current?.selectSubtitle(id), []),
+    selectQuality: useCallback((id: string) => runRef.current?.selectQuality(id), []),
+    selectAudio: useCallback((id: string) => runRef.current?.selectAudio(id), []),
     resume: useCallback(() => runRef.current?.resume(), []),
   };
 }
@@ -128,6 +223,14 @@ export class PlaybackRun {
   private disposed = false;
   private attemptCleanup: (() => void) | null = null;
   private diagnostics: PlaybackDiagnostic[] = [];
+  private subtitleOptions: PlaybackMediaOption[] = IDLE_STATE.subtitleOptions;
+  private qualityOptions: PlaybackMediaOption[] = IDLE_STATE.qualityOptions;
+  private audioOptions: PlaybackMediaOption[] = IDLE_STATE.audioOptions;
+  private selectSubtitleImpl: ((id: string) => void) | null = null;
+  private selectQualityImpl: ((id: string) => void) | null = null;
+  private selectAudioImpl: ((id: string) => void) | null = null;
+  private lastStatus: PlaybackStatus = "idle";
+  private lastMessage = "";
 
   constructor(
     private readonly channel: PlaybackChannel,
@@ -176,6 +279,18 @@ export class PlaybackRun {
     this.startAttempt(index, "switching");
   }
 
+  selectSubtitle(id: string): void {
+    if (!this.disposed) this.selectSubtitleImpl?.(id);
+  }
+
+  selectQuality(id: string): void {
+    if (!this.disposed) this.selectQualityImpl?.(id);
+  }
+
+  selectAudio(id: string): void {
+    if (!this.disposed) this.selectAudioImpl?.(id);
+  }
+
   resume(): void {
     if (this.disposed) return;
     void this.video.play().then(() => {
@@ -201,6 +316,7 @@ export class PlaybackRun {
     this.attemptCleanup?.();
     this.attemptCleanup = null;
     this.cursor = index;
+    this.resetMediaOptions(this.orderedSources[index]);
     const token = this.generation;
     const source = this.orderedSources[index];
     this.publish(
@@ -379,12 +495,52 @@ export class PlaybackRun {
     addVideoListener("ended", onMediaError);
     cleanupTasks.push(() => stallWatchdog.stop());
 
+    const installNativeTextControls = () => {
+      const textTracks = this.video.textTracks;
+      if (!textTracks) return;
+      const refresh = () => {
+        if (!this.isActive(token)) return;
+        const tracks = selectableTextTracks(textTracks);
+        this.subtitleOptions = [
+          {
+            id: "off",
+            label: "Off",
+            active: !tracks.some(({ track }) => track.mode === "showing"),
+          },
+          ...tracks.map(({ track, index }) => ({
+            id: `native-subtitle-${index}`,
+            label: track.label || displayLanguage(track.language) || `Subtitles ${index + 1}`,
+            detail: displayLanguage(track.language) || undefined,
+            active: track.mode === "showing",
+          })),
+        ];
+        this.publishCurrent();
+      };
+      this.selectSubtitleImpl = (id) => {
+        const selected = id === "off" ? -1 : Number(id.replace("native-subtitle-", ""));
+        selectableTextTracks(textTracks).forEach(({ track, index }) => {
+          track.mode = index === selected ? "showing" : "disabled";
+        });
+        refresh();
+      };
+      textTracks.addEventListener?.("addtrack", refresh);
+      textTracks.addEventListener?.("removetrack", refresh);
+      textTracks.addEventListener?.("change", refresh);
+      cleanupTasks.push(() => {
+        textTracks.removeEventListener?.("addtrack", refresh);
+        textTracks.removeEventListener?.("removetrack", refresh);
+        textTracks.removeEventListener?.("change", refresh);
+      });
+      refresh();
+    };
+
     if (kind === "hls") {
       const useNativeHls = () => {
         if (
           sourceNeedsHeaders(source)
           || !this.video.canPlayType("application/vnd.apple.mpegurl")
         ) return false;
+        installNativeTextControls();
         this.video.src = source.url;
         this.video.load();
         return true;
@@ -426,14 +582,121 @@ export class PlaybackRun {
           },
           loader: createTauriHlsLoader(source),
         });
+        let selectedQuality = "auto";
+        const refreshHlsOptions = () => {
+          if (!this.isActive(token) || !hls) return;
+          const nativeTextTracks = this.video.textTracks
+            ? selectableTextTracks(this.video.textTracks)
+            : [];
+          const nativeTrackIdentities = new Set(nativeTextTracks.map(({ track }) =>
+            textTrackIdentity(track.label, track.language)));
+          this.qualityOptions = [
+            {
+              id: "auto",
+              label: "Auto",
+              detail: "Adapts to your connection",
+              active: selectedQuality === "auto",
+            },
+            ...hls.levels.map((level, index) => ({
+              id: `hls-quality-${index}`,
+              label: qualityLabel(level.height, level.name, level.bitrate),
+              detail: qualityDetail(level.width, level.height, level.bitrate),
+              active: selectedQuality === `hls-quality-${index}`,
+            })),
+          ];
+          this.subtitleOptions = [
+            {
+              id: "off",
+              label: "Off",
+              active: (!hls.subtitleDisplay || hls.subtitleTrack < 0)
+                && !nativeTextTracks.some(({ track }) => track.mode === "showing"),
+            },
+            ...nativeTextTracks.map(({ track, index }) => ({
+              id: `hls-texttrack-${index}`,
+              label: track.label || displayLanguage(track.language) || `Captions ${index + 1}`,
+              detail: [displayLanguage(track.language), track.kind === "captions" ? "Closed captions" : "Subtitles"].filter(Boolean).join(" · ") || undefined,
+              active: track.mode === "showing",
+            })),
+            ...hls.subtitleTracks.map((track, index) => ({ track, index }))
+              .filter(({ track }) => !nativeTrackIdentities.has(textTrackIdentity(track.name, track.lang)))
+              .map(({ track, index }) => ({
+              id: `hls-subtitle-${index}`,
+              label: track.name || displayLanguage(track.lang) || `Subtitles ${index + 1}`,
+              detail: displayLanguage(track.lang) || undefined,
+              active: hls?.subtitleDisplay === true && hls.subtitleTrack === index,
+            })),
+          ];
+          this.audioOptions = hls.audioTracks.length
+            ? hls.audioTracks.map((track, index) => ({
+              id: `hls-audio-${index}`,
+              label: track.name || displayLanguage(track.lang) || `Audio ${index + 1}`,
+              detail: [displayLanguage(track.lang), track.channels].filter(Boolean).join(" · ") || undefined,
+              active: hls?.audioTrack === index,
+            }))
+            : [{ id: "default", label: "Default audio", active: true }];
+          this.publishCurrent();
+        };
+        this.selectQualityImpl = (id) => {
+          if (!hls || (id !== "auto" && !/^hls-quality-\d+$/.test(id))) return;
+          selectedQuality = id;
+          hls.currentLevel = id === "auto" ? -1 : Number(id.replace("hls-quality-", ""));
+          refreshHlsOptions();
+        };
+        this.selectSubtitleImpl = (id) => {
+          if (!hls || (id !== "off" && !/^hls-(?:subtitle|texttrack)-\d+$/.test(id))) return;
+          const textTracks = this.video.textTracks
+            ? selectableTextTracks(this.video.textTracks)
+            : [];
+          if (id === "off") {
+            hls.subtitleDisplay = false;
+            hls.subtitleTrack = -1;
+            textTracks.forEach(({ track }) => { track.mode = "disabled"; });
+          } else if (id.startsWith("hls-texttrack-")) {
+            const selected = Number(id.replace("hls-texttrack-", ""));
+            textTracks.forEach(({ track, index }) => {
+              track.mode = index === selected ? "showing" : "disabled";
+            });
+            hls.subtitleDisplay = true;
+            const selectedTrack = this.video.textTracks[selected];
+            const hlsIndex = hls.subtitleTracks.findIndex((track) =>
+              textTrackIdentity(track.name, track.lang) === textTrackIdentity(selectedTrack?.label, selectedTrack?.language));
+            if (hlsIndex >= 0) hls.subtitleTrack = hlsIndex;
+          } else {
+            textTracks.forEach(({ track }) => { track.mode = "disabled"; });
+            hls.subtitleDisplay = true;
+            hls.subtitleTrack = Number(id.replace("hls-subtitle-", ""));
+          }
+          refreshHlsOptions();
+        };
+        const textTracks = this.video.textTracks;
+        textTracks?.addEventListener?.("addtrack", refreshHlsOptions);
+        textTracks?.addEventListener?.("removetrack", refreshHlsOptions);
+        textTracks?.addEventListener?.("change", refreshHlsOptions);
+        cleanupTasks.push(() => {
+          textTracks?.removeEventListener?.("addtrack", refreshHlsOptions);
+          textTracks?.removeEventListener?.("removetrack", refreshHlsOptions);
+          textTracks?.removeEventListener?.("change", refreshHlsOptions);
+        });
+        this.selectAudioImpl = (id) => {
+          if (!hls || !/^hls-audio-\d+$/.test(id)) return;
+          hls.audioTrack = Number(id.replace("hls-audio-", ""));
+          refreshHlsOptions();
+        };
         hls.on(HlsRuntime.Events.MEDIA_ATTACHED, () => {
           startupMilestone = "the browser media engine";
           if (this.isActive(token)) hls?.loadSource(source.url);
         });
         hls.on(HlsRuntime.Events.MANIFEST_PARSED, () => {
           startupMilestone = "a parsed stream manifest";
+          refreshHlsOptions();
           attemptPlay();
         });
+        hls.on(HlsRuntime.Events.LEVELS_UPDATED, refreshHlsOptions);
+        hls.on(HlsRuntime.Events.LEVEL_SWITCHED, refreshHlsOptions);
+        hls.on(HlsRuntime.Events.AUDIO_TRACKS_UPDATED, refreshHlsOptions);
+        hls.on(HlsRuntime.Events.AUDIO_TRACK_SWITCHED, refreshHlsOptions);
+        hls.on(HlsRuntime.Events.SUBTITLE_TRACKS_UPDATED, refreshHlsOptions);
+        hls.on(HlsRuntime.Events.SUBTITLE_TRACK_SWITCH, refreshHlsOptions);
         hls.on(HlsRuntime.Events.FRAG_LOADED, () => {
           startupMilestone = "downloaded media segments";
         });
@@ -502,12 +765,97 @@ export class PlaybackRun {
               retryAttempts: { MPD: 0, MediaSegment: 2, InitializationSegment: 2 },
             },
           });
+          let selectedQuality = "auto";
+          const refreshDashOptions = () => {
+            if (!this.isActive(token) || !dashPlayer) return;
+            const representations = dashPlayer.getRepresentationsByType("video");
+            const subtitleTracks = dashPlayer.getTracksFor("text");
+            const audioTracks = dashPlayer.getTracksFor("audio");
+            const currentSubtitle = dashPlayer.getCurrentTrackFor("text");
+            const currentAudio = dashPlayer.getCurrentTrackFor("audio");
+            this.qualityOptions = [
+              {
+                id: "auto",
+                label: "Auto",
+                detail: "Adapts to your connection",
+                active: selectedQuality === "auto",
+              },
+              ...representations
+                .map((representation) => dashQualityOption(representation, selectedQuality))
+                .sort((left, right) => right.sort - left.sort)
+                .map(({ sort: _sort, ...option }) => option),
+            ];
+            this.subtitleOptions = [
+              { id: "off", label: "Off", active: !dashPlayer.isTextEnabled() },
+              ...subtitleTracks.map((track, index) => dashTrackOption(
+                track,
+                `dash-subtitle-${index}`,
+                dashPlayer?.isTextEnabled() === true && sameDashTrack(track, currentSubtitle),
+                "Subtitles",
+              )),
+            ];
+            this.audioOptions = audioTracks.length
+              ? audioTracks.map((track, index) => dashTrackOption(
+                track,
+                `dash-audio-${index}`,
+                sameDashTrack(track, currentAudio),
+                "Audio",
+              ))
+              : [{ id: "default", label: "Default audio", active: true }];
+            this.publishCurrent();
+          };
+          this.selectQualityImpl = (id) => {
+            if (!dashPlayer) return;
+            if (id === "auto") {
+              selectedQuality = "auto";
+              dashPlayer.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: true } } } });
+            } else if (id.startsWith("dash-quality-")) {
+              const representationId = id.slice("dash-quality-".length);
+              if (!dashPlayer.getRepresentationsByType("video").some((item) => item.id === representationId)) return;
+              selectedQuality = id;
+              dashPlayer.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false } } } });
+              dashPlayer.setRepresentationForTypeById("video", representationId, true);
+            }
+            refreshDashOptions();
+          };
+          this.selectSubtitleImpl = (id) => {
+            if (!dashPlayer) return;
+            if (id === "off") {
+              dashPlayer.enableText(false);
+              dashPlayer.setTextTrack(-1);
+            } else if (/^dash-subtitle-\d+$/.test(id)) {
+              const index = Number(id.replace("dash-subtitle-", ""));
+              const track = dashPlayer.getTracksFor("text")[index];
+              if (!track) return;
+              dashPlayer.enableText(true);
+              dashPlayer.setCurrentTrack(track);
+              dashPlayer.setTextTrack(index);
+            }
+            refreshDashOptions();
+          };
+          this.selectAudioImpl = (id) => {
+            if (!dashPlayer || !/^dash-audio-\d+$/.test(id)) return;
+            const track = dashPlayer.getTracksFor("audio")[Number(id.replace("dash-audio-", ""))];
+            if (!track) return;
+            dashPlayer.setCurrentTrack(track);
+            refreshDashOptions();
+          };
           const onDashError = (data: unknown) => {
             const failure = describeDashFailure(data, hasPlayed, source);
             this.fail(token, source, kind, failure.reason, failure.message, failure);
           };
           dashPlayer.on(dashModule.MediaPlayer.events.ERROR, onDashError);
+          dashPlayer.on(dashModule.MediaPlayer.events.STREAM_INITIALIZED, refreshDashOptions);
+          dashPlayer.on(dashModule.MediaPlayer.events.TEXT_TRACKS_ADDED, refreshDashOptions);
+          dashPlayer.on(dashModule.MediaPlayer.events.TRACK_CHANGE_RENDERED, refreshDashOptions);
+          dashPlayer.on(dashModule.MediaPlayer.events.QUALITY_CHANGE_RENDERED, refreshDashOptions);
           cleanupTasks.push(() => dashPlayer?.off(dashModule.MediaPlayer.events.ERROR, onDashError));
+          cleanupTasks.push(() => {
+            dashPlayer?.off(dashModule.MediaPlayer.events.STREAM_INITIALIZED, refreshDashOptions);
+            dashPlayer?.off(dashModule.MediaPlayer.events.TEXT_TRACKS_ADDED, refreshDashOptions);
+            dashPlayer?.off(dashModule.MediaPlayer.events.TRACK_CHANGE_RENDERED, refreshDashOptions);
+            dashPlayer?.off(dashModule.MediaPlayer.events.QUALITY_CHANGE_RENDERED, refreshDashOptions);
+          });
           cleanupTasks.push(() => {
             dashPlayer?.destroy();
             dashPlayer = null;
@@ -545,6 +893,7 @@ export class PlaybackRun {
         );
         return;
       }
+      installNativeTextControls();
       this.video.src = source.url;
       this.video.load();
     }
@@ -591,6 +940,8 @@ export class PlaybackRun {
   }
 
   private publish(status: PlaybackStatus, message: string): void {
+    this.lastStatus = status;
+    this.lastMessage = message;
     const source = this.orderedSources[this.cursor] || null;
     this.update({
       status,
@@ -614,8 +965,29 @@ export class PlaybackRun {
         ].filter(Boolean).join(" · "),
         active: index === this.cursor,
       })),
+      subtitleOptions: this.subtitleOptions,
+      qualityOptions: this.qualityOptions,
+      audioOptions: this.audioOptions,
       diagnostics: this.diagnostics,
     });
+  }
+
+  private publishCurrent(): void {
+    if (!this.disposed) this.publish(this.lastStatus, this.lastMessage);
+  }
+
+  private resetMediaOptions(source?: StreamSource): void {
+    this.subtitleOptions = [{ id: "off", label: "Off", active: true }];
+    this.qualityOptions = [{
+      id: "auto",
+      label: "Auto",
+      detail: source?.quality ? `Source feed · ${source.quality}` : "Source default",
+      active: true,
+    }];
+    this.audioOptions = [{ id: "default", label: "Default audio", active: true }];
+    this.selectSubtitleImpl = null;
+    this.selectQualityImpl = null;
+    this.selectAudioImpl = null;
   }
 
   private isActive(token: number): boolean {

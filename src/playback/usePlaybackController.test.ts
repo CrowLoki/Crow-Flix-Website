@@ -1,18 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-type MockHlsError = {
-  fatal: boolean;
-  type: string;
-  details: string;
-};
-
-type MockHlsHandler = (event: string, data?: MockHlsError) => void;
+type MockHlsHandler = (event: string, data?: unknown) => void;
 
 type MockHlsInstance = {
   handlers: Map<string, MockHlsHandler>;
   config: Record<string, unknown>;
   loadSource: ReturnType<typeof vi.fn>;
   startLoad: ReturnType<typeof vi.fn>;
+  levels: Array<{ height: number; width: number; bitrate: number; name: string }>;
+  subtitleTracks: Array<{ name: string; lang?: string }>;
+  audioTracks: Array<{ name: string; lang?: string; channels?: string }>;
+  currentLevel: number;
+  subtitleTrack: number;
+  subtitleDisplay: boolean;
+  audioTrack: number;
 };
 
 const hlsState = vi.hoisted(() => ({
@@ -26,6 +27,17 @@ vi.mock("hls.js", () => {
     static Events = {
       MEDIA_ATTACHED: "hlsMediaAttached",
       MANIFEST_PARSED: "hlsManifestParsed",
+      LEVELS_UPDATED: "hlsLevelsUpdated",
+      LEVEL_SWITCHED: "hlsLevelSwitched",
+      AUDIO_TRACKS_UPDATED: "hlsAudioTracksUpdated",
+      AUDIO_TRACK_SWITCHED: "hlsAudioTrackSwitched",
+      SUBTITLE_TRACKS_UPDATED: "hlsSubtitleTracksUpdated",
+      SUBTITLE_TRACK_SWITCH: "hlsSubtitleTrackSwitch",
+      FRAG_LOADED: "hlsFragLoaded",
+      FRAG_DECRYPTED: "hlsFragDecrypted",
+      FRAG_PARSED: "hlsFragParsed",
+      BUFFER_CODECS: "hlsBufferCodecs",
+      BUFFER_APPENDED: "hlsBufferAppended",
       ERROR: "hlsError",
     };
     static ErrorTypes = {
@@ -43,6 +55,22 @@ vi.mock("hls.js", () => {
     config: Record<string, unknown>;
     startLoad = vi.fn();
     loadSource = vi.fn();
+    levels = [
+      { height: 720, width: 1280, bitrate: 2_500_000, name: "720p" },
+      { height: 1080, width: 1920, bitrate: 5_000_000, name: "1080p" },
+    ];
+    subtitleTracks = [
+      { name: "English", lang: "en" },
+      { name: "Español", lang: "es" },
+    ];
+    audioTracks = [
+      { name: "English", lang: "en", channels: "2" },
+      { name: "Español", lang: "es", channels: "2" },
+    ];
+    currentLevel = -1;
+    subtitleTrack = -1;
+    subtitleDisplay = false;
+    audioTrack = 0;
     recoverMediaError = vi.fn();
     attachMedia = vi.fn();
     stopLoad = vi.fn();
@@ -240,6 +268,111 @@ describe("PlaybackRun retry", () => {
     run.select(-1);
     run.select(99);
     expect(updates).toHaveLength(selectedUpdateCount);
+    run.dispose();
+  });
+
+  it("publishes and applies HLS subtitle, language, and quality choices", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const updates: PlaybackControllerState[] = [];
+    const video = {
+      currentTime: 0,
+      ended: false,
+      addEventListener: vi.fn(),
+      load: vi.fn(),
+      pause: vi.fn(),
+      play: vi.fn(async () => undefined),
+      removeAttribute: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLVideoElement;
+    const run = new PlaybackRun({
+      key: "media-options",
+      name: "Media Options",
+      sources: [{ id: "hls-options", url: "https://provider.test/master.m3u8" }],
+    }, video, (state) => updates.push(state));
+
+    run.start();
+    await vi.waitFor(() => expect(hlsState.instances).toHaveLength(1));
+    const instance = hlsState.instances[0];
+    instance?.handlers.get("hlsManifestParsed")?.("hlsManifestParsed");
+
+    expect(updates[updates.length - 1]).toMatchObject({
+      qualityOptions: [
+        { id: "auto", label: "Auto", active: true },
+        { id: "hls-quality-0", label: "720p", active: false },
+        { id: "hls-quality-1", label: "1080p", active: false },
+      ],
+      subtitleOptions: [
+        { id: "off", label: "Off", active: true },
+        { id: "hls-subtitle-0", label: "English", active: false },
+        { id: "hls-subtitle-1", label: "Español", active: false },
+      ],
+      audioOptions: [
+        { id: "hls-audio-0", label: "English", active: true },
+        { id: "hls-audio-1", label: "Español", active: false },
+      ],
+    });
+
+    run.selectQuality("hls-quality-1");
+    expect(instance?.currentLevel).toBe(1);
+    expect(updates[updates.length - 1]?.qualityOptions.find((option) => option.active)?.label).toBe("1080p");
+
+    run.selectSubtitle("hls-subtitle-1");
+    expect(instance).toMatchObject({ subtitleDisplay: true, subtitleTrack: 1 });
+    expect(updates[updates.length - 1]?.subtitleOptions.find((option) => option.active)?.label).toBe("Español");
+
+    run.selectAudio("hls-audio-1");
+    expect(instance?.audioTrack).toBe(1);
+    expect(updates[updates.length - 1]?.audioOptions.find((option) => option.active)?.label).toBe("Español");
+    run.dispose();
+  });
+
+  it("includes embedded HLS closed-caption tracks from the video element", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const updates: PlaybackControllerState[] = [];
+    const captions = {
+      kind: "captions",
+      label: "English CC",
+      language: "en",
+      mode: "disabled",
+    };
+    const metadata = {
+      kind: "metadata",
+      label: "Timed metadata",
+      language: "",
+      mode: "hidden",
+    };
+    const textTracks = Object.assign([captions, metadata], {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    const video = {
+      currentTime: 0,
+      ended: false,
+      textTracks,
+      addEventListener: vi.fn(),
+      load: vi.fn(),
+      pause: vi.fn(),
+      play: vi.fn(async () => undefined),
+      removeAttribute: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLVideoElement;
+    const run = new PlaybackRun({
+      key: "embedded-captions",
+      name: "Embedded Captions",
+      sources: [{ id: "captions", url: "https://provider.test/captions.m3u8" }],
+    }, video, (state) => updates.push(state));
+
+    run.start();
+    await vi.waitFor(() => expect(hlsState.instances).toHaveLength(1));
+    hlsState.instances[0]?.handlers.get("hlsManifestParsed")?.("hlsManifestParsed");
+    expect(updates[updates.length - 1]?.subtitleOptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "hls-texttrack-0", label: "English CC", detail: "English · Closed captions" }),
+    ]));
+    expect(JSON.stringify(updates[updates.length - 1]?.subtitleOptions)).not.toContain("Timed metadata");
+
+    run.selectSubtitle("hls-texttrack-0");
+    expect(captions.mode).toBe("showing");
+    expect(updates[updates.length - 1]?.subtitleOptions.find((option) => option.active)?.label).toBe("English CC");
     run.dispose();
   });
 

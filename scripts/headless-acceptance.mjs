@@ -176,15 +176,51 @@ try {
     playlist: document.querySelector('.source-dialog')?.innerText.includes('Personal M3U playlist URL'),
     guide: document.querySelector('.source-dialog')?.innerText.includes('Personal XMLTV guide URL')
   })`);
+  await evaluate("document.querySelector('.source-dialog .dialog-close')?.click()");
+  await waitFor("!document.querySelector('.source-dialog')");
+  await evaluate("document.querySelector('.browse-results .card-main')?.click()");
+  await waitFor("Boolean(document.querySelector('.player'))");
+  const player = await evaluate(`({
+    customControls: Boolean(document.querySelector('.player-controls')),
+    nativeControlsRemoved: !document.querySelector('.player video')?.hasAttribute('controls'),
+    settingsButton: Boolean(document.querySelector('.player button[aria-label="Playback settings"]')),
+    guideButton: Boolean(document.querySelector('.player-brand[aria-controls="player-mini-guide"]')),
+    subtitleButton: Boolean(document.querySelector('.player button[aria-label="Subtitles"]')),
+    fullscreenButton: Boolean(document.querySelector('.player button[aria-label*="Fullscreen" i]'))
+  })`);
+  await evaluate("document.querySelector('.player button[aria-label=\"Playback settings\"]')?.click()");
+  await waitFor("Boolean(document.querySelector('.player-settings-main'))");
+  await evaluate(`[...document.querySelectorAll('.player-settings-main button')].find((button) => button.textContent.includes('Subtitles'))?.click()`);
+  await waitFor("document.querySelector('.player-settings-submenu')?.innerText.includes('Subtitles')");
+  const subtitleMenu = await evaluate(`({
+    off: [...document.querySelectorAll('.player-settings-submenu button')].some((button) => button.textContent.includes('Off')),
+    honestUnavailable: document.querySelector('.player-settings-submenu')?.innerText.includes('not supplying a subtitle track') || document.querySelectorAll('.player-settings-submenu button').length > 2
+  })`);
+  await evaluate("document.querySelector('.player button[aria-label=\"Playback settings\"]')?.click(); document.querySelector('.player-brand')?.click()");
+  await waitFor("Boolean(document.querySelector('.player-mini-guide'))");
+  const miniGuide = await evaluate(`({
+    search: Boolean(document.querySelector('.mini-guide-search input')),
+    channels: document.querySelectorAll('.mini-guide-list > button').length,
+    previous: [...document.querySelectorAll('.mini-guide-zap button')].some((button) => button.textContent.includes('Previous channel')),
+    next: [...document.querySelectorAll('.mini-guide-zap button')].some((button) => button.textContent.includes('Next channel'))
+  })`);
+  await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+  await waitFor("Boolean(document.querySelector('.player')) && !document.querySelector('.player-mini-guide')");
+  await evaluate("document.querySelector('.player video')?.click()");
+  const playerStayedOpen = await evaluate("Boolean(document.querySelector('.player'))");
 
   const assertions = {
     homeLoaded: home.cards > 0 && home.addSource && home.liveNav && !home.desktopDownload,
     fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy,
     detailsDialog: details.channelId && details.sources && details.providers,
     personalSourcesDialog: sourceDialog.playlist && sourceDialog.guide,
+    playerControls: player.customControls && player.nativeControlsRemoved && player.settingsButton && player.guideButton && player.subtitleButton && player.fullscreenButton,
+    subtitleMenu: subtitleMenu.off && subtitleMenu.honestUnavailable,
+    miniGuide: miniGuide.search && miniGuide.channels > 0 && miniGuide.previous && miniGuide.next,
+    escapeClosesOverlayOnly: playerStayedOpen,
   };
   if (Object.values(assertions).some((value) => !value)) {
-    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, live, details, sourceDialog })}`);
+    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, live, details, sourceDialog, player, subtitleMenu, miniGuide })}`);
   }
   console.log(JSON.stringify({
     ok: true,
