@@ -102,6 +102,10 @@ from the underlying catalogue.
 When multiple catalogues publish the same exact URL/header identity, CrowFlix
 keeps one playback route and records every contributing provider instead of
 overwriting lineage or duplicating the stream.
+Safe ASCII Referer header values are preserved exactly, including the bare-host
+form used by one current public playlist. A known-dead URL is retained and
+labelled beside its verified successor rather than being overwritten; source
+ordering favours the current route without rewriting history.
 
 Because IPTV-org no longer publishes stream-status fields, the browser also
 uses the free, MIT-licensed

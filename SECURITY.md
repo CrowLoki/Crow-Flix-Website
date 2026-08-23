@@ -52,3 +52,8 @@ The built-in catalogue can retain recognised SRT, RTMP, RTSP, and MMSH URLs as
 non-browser metadata. They are never sent through the HTTP relay or background
 readiness queue. Only separately validated HTTP(S) fallbacks enter browser
 delivery; credential-bearing and unknown schemes remain rejected.
+
+Provider Referer values are request-header metadata, not fetch targets. CrowFlix
+retains printable bounded ASCII values (including a bare host) and the relay
+rejects control characters before forwarding them. They are never interpreted
+as a relay destination or used to weaken external URL validation.
