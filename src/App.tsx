@@ -92,6 +92,7 @@ import {
 } from "./playback/availability";
 import {
   isEnglishChannel,
+  isHomeEntertainmentChannel,
   preferredAudienceCountryOrder,
   prioritizeEnglishAustraliaUnitedStates,
 } from "./audiencePreferences";
@@ -929,15 +930,27 @@ export default function App() {
     () => rankedCatalogChannels.filter(isEnglishChannel),
     [rankedCatalogChannels],
   );
+  const australianEnglishEntertainment = useMemo(
+    () => australianEnglishChannels.filter(isHomeEntertainmentChannel),
+    [australianEnglishChannels],
+  );
+  const americanEnglishEntertainment = useMemo(
+    () => americanEnglishChannels.filter(isHomeEntertainmentChannel),
+    [americanEnglishChannels],
+  );
+  const englishEntertainment = useMemo(
+    () => englishChannels.filter(isHomeEntertainmentChannel),
+    [englishChannels],
+  );
   const sourceCount = useMemo(
     () => catalog.channels.reduce((total, channel) => total + channelSources(channel).length, 0),
     [catalog.channels],
   );
-  const heroCandidates = australianEnglishChannels.length
-    ? australianEnglishChannels
-    : americanEnglishChannels.length
-      ? americanEnglishChannels
-      : englishChannels;
+  const heroCandidates = australianEnglishEntertainment.length
+    ? australianEnglishEntertainment
+    : americanEnglishEntertainment.length
+      ? americanEnglishEntertainment
+      : englishEntertainment;
   const hero = heroCandidates.find((channel) => currentProgramme(programmes, channel.id, clock)) || heroCandidates[0] || rankedCatalogChannels[0];
   const heroNow = hero ? currentProgramme(programmes, hero.id, clock) : undefined;
   const heroNext = hero ? nextProgramme(programmes, hero.id, clock) : undefined;
@@ -1026,7 +1039,7 @@ export default function App() {
       {loading && <LoadingOverlay message={loadingMessage} />}
       {catalogError && <CatalogErrorBanner message={catalogError} hasCatalog={catalog.channels.length > 0} loading={loading} onRetry={() => void loadCatalog(catalog.channels.length > 0)} />}
       <main>
-        {view === "home" && <HomeView channels={rankedCatalogChannels} australianEnglish={australianEnglishChannels} americanEnglish={americanEnglishChannels} english={englishChannels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onGuide={() => setView("guide")} onInfo={setDetailsChannel} />}
+        {view === "home" && <HomeView channels={rankedCatalogChannels} australianEnglish={australianEnglishEntertainment} americanEnglish={americanEnglishEntertainment} english={englishEntertainment} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onGuide={() => setView("guide")} onInfo={setDetailsChannel} />}
         {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} subdivision={subdivision} setSubdivision={setSubdivision} city={city} setCity={setCity} timezone={timezone} setTimezone={setTimezone} owner={owner} setOwner={setOwner} network={network} setNetwork={setNetwork} feed={feed} setFeed={setFeed} provider={provider} setProvider={setProvider} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} />}
         {view === "guide" && <GuideView catalog={catalog} country={guideCountry} setCountry={setGuideCountry} programmes={programmes} clock={clock} status={guideStatus} loading={guideLoading} requiresVerification={!isDesktop && guideNeedsVerification} verificationError={guideVerificationError} onVerified={(token) => void loadGuide(guideCountry, true, token)} onVerificationError={(message) => { setGuideVerificationError(message || null); if (message) setGuideStatus(message); }} onRefresh={() => void loadGuide(guideCountry, true)} onPlay={play} />}
         {view === "web" && <WebDestinationsView items={webDestinations} query={query} onOpen={(item) => void openWebsite(item.url, item.title)} onSave={saveWebDestination} onDelete={deleteWebDestination} onImport={importWebDestinations} onMessage={showToast} />}
@@ -1099,12 +1112,12 @@ function HomeView({ channels, australianEnglish, americanEnglish, english, progr
     </section>
     <div className="home-content">
       {recent.length > 0 && <ChannelRail title="Continue watching" channels={recent} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />}
-      <ChannelRail title="Australia in English" channels={australianEnglish.slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="Australian entertainment" channels={australianEnglish.slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
       <ChannelRail title="American TV & Movies" channels={americanEnglish.slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
       <ChannelRail title="English-language television" channels={english.slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
-      <ChannelRail title="Live news" channels={rail("news")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
-      <ChannelRail title="Movies on now" channels={rail("movies")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
-      <ChannelRail title="Live sports" channels={rail("sports")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="Movies to watch" channels={rail("movies")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="TV shows & entertainment" channels={[...rail("entertainment"), ...rail("series"), ...rail("classic")].slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="Animation & family" channels={[...rail("animation"), ...rail("kids"), ...rail("family")].slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
       <ChannelRail title="Documentaries and discovery" channels={[...rail("documentary"), ...rail("science")].slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
       <ChannelRail title="Music and entertainment" channels={[...rail("music"), ...rail("entertainment")].slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
     </div>

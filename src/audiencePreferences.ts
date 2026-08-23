@@ -5,6 +5,10 @@ export type AudienceChannel = {
   languages: readonly string[];
 };
 
+export type HomeChannel = {
+  categories: readonly string[];
+};
+
 export const DEFAULT_AUDIENCE_COUNTRIES = ["AU", "US"] as const;
 
 export function isEnglishLanguage(language: string): boolean {
@@ -45,4 +49,24 @@ export function preferredAudienceCountryOrder(left: string, right: string): numb
     return 2;
   };
   return rank(left) - rank(right) || left.localeCompare(right);
+}
+
+const HOME_ENTERTAINMENT_CATEGORIES = new Set([
+  "animation",
+  "classic",
+  "comedy",
+  "culture",
+  "documentary",
+  "entertainment",
+  "family",
+  "kids",
+  "movies",
+  "music",
+  "science",
+  "series",
+]);
+
+export function isHomeEntertainmentChannel(channel: HomeChannel): boolean {
+  return channel.categories.some((category) =>
+    HOME_ENTERTAINMENT_CATEGORIES.has(category.toLocaleLowerCase()));
 }

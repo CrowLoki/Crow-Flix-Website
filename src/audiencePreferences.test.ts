@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   audiencePreferenceScore,
+  isHomeEntertainmentChannel,
   isEnglishChannel,
   prioritizeEnglishAustraliaUnitedStates,
 } from "./audiencePreferences";
@@ -30,5 +31,13 @@ describe("CrowFlix audience preferences", () => {
     ]);
     expect(audiencePreferenceScore(channels[0])).toBe(0);
     expect(prioritizeEnglishAustraliaUnitedStates(channels)).toHaveLength(channels.length);
+  });
+
+  it("keeps live news and sport out of the entertainment-led Home page", () => {
+    expect(isHomeEntertainmentChannel({ categories: ["movies"] })).toBe(true);
+    expect(isHomeEntertainmentChannel({ categories: ["kids", "animation"] })).toBe(true);
+    expect(isHomeEntertainmentChannel({ categories: ["news"] })).toBe(false);
+    expect(isHomeEntertainmentChannel({ categories: ["sports"] })).toBe(false);
+    expect(isHomeEntertainmentChannel({ categories: ["racing"] })).toBe(false);
   });
 });
