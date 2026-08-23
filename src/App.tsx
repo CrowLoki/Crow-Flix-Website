@@ -120,6 +120,7 @@ import "./App.css";
 
 const MASCOT_IMAGE = "/assets/brand/crow-mascot.png";
 const BRAND_ICON = "/assets/brand/crow-head.png";
+const CROW_HELPER_PIXEL_IMAGE = "/assets/brand/crow-helper-pixel.webp";
 const PAGE_SIZE = 48;
 
 type View = "home" | "live" | "guide" | "web" | "favourites" | "about";
@@ -1061,9 +1062,59 @@ export default function App() {
       {detailsChannel && <ChannelDetails channel={detailsChannel} now={currentProgramme(programmes, detailsChannel.id, clock)} next={nextProgramme(programmes, detailsChannel.id, clock)} favourite={favourites.includes(detailsChannel.key)} onPlay={(channel) => { closeChannelDetails(); play(channel); }} onFavourite={toggleFavourite} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={closeChannelDetails} />}
       {sourceOpen && <SourceDialog sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} epgUrl={epgUrl} setEpgUrl={setEpgUrl} loading={loading || guideLoading} onClose={closeSourceDialog} onPlaylistUrl={() => void importPlaylistUrl()} onPlaylistFile={(file) => void importPlaylistFile(file)} onEpgUrl={() => void importEpgUrl()} onEpgFile={(file) => void importEpgFile(file)} />}
       {toast && <div className="toast"><CheckCircle weight="fill" />{toast}</div>}
+      <CrowGuide view={view} channels={rankedCatalogChannels} recent={recent} onPlay={play} onGuide={() => setView("guide")} />
     </div>
     </PlaybackAvailabilityContext.Provider>
   );
+}
+
+function CrowGuide({ view, channels, recent, onPlay, onGuide }: { view: View; channels: Channel[]; recent: string[]; onPlay: (channel: Channel) => void; onGuide: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [curious, setCurious] = useState(false);
+  const [messageIndex, setMessageIndex] = useState(0);
+  const activityTimer = useRef<number | undefined>(undefined);
+  const recentChannels = useMemo(
+    () => recent.map((key) => channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[],
+    [channels, recent],
+  );
+  const suggested = useMemo(() => {
+    const watched = new Set(recentChannels.map((channel) => channel.key));
+    const categories = new Set(recentChannels.flatMap((channel) => channel.categories));
+    return channels.find((channel) =>
+      !watched.has(channel.key)
+      && isHomeEntertainmentChannel(channel)
+      && (categories.size === 0 || channel.categories.some((category) => categories.has(category))),
+    ) || channels.find((channel) => !watched.has(channel.key) && isHomeEntertainmentChannel(channel));
+  }, [channels, recentChannels]);
+  const messages = useMemo(() => [
+    suggested
+      ? `I found ${suggested.name} based on what you have opened recently.`
+      : "I can help you find something to watch.",
+    view === "guide"
+      ? "I am watching the live channel guide with you."
+      : "Open the channel guide when you want to know what is on now.",
+    "Your viewing suggestions stay on this device.",
+  ], [suggested, view]);
+  useEffect(() => {
+    const reactToPointer = () => {
+      setCurious(true);
+      window.clearTimeout(activityTimer.current);
+      activityTimer.current = window.setTimeout(() => setCurious(false), 900);
+    };
+    window.addEventListener("pointermove", reactToPointer, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", reactToPointer);
+      window.clearTimeout(activityTimer.current);
+    };
+  }, []);
+  useEffect(() => {
+    const timer = window.setInterval(() => setMessageIndex((index) => (index + 1) % messages.length), 13_000);
+    return () => window.clearInterval(timer);
+  }, [messages.length]);
+  return <aside className={`crow-guide ${curious ? "crow-guide-curious" : ""}`} aria-label="CrowFlix helper">
+    {open && <div className="crow-guide-bubble" role="status"><button aria-label="Close CrowFlix helper" onClick={() => setOpen(false)}><X /></button><strong>CrowFlix guide</strong><p>{messages[messageIndex]}</p><small>Suggestions stay on this device.</small>{suggested && <button className="crow-guide-action" onClick={() => { onPlay(suggested); setOpen(false); }}><Play weight="fill" /> Show me {suggested.name}</button>}<button className="crow-guide-link" onClick={() => { onGuide(); setOpen(false); }}><CalendarDots /> What is on now?</button></div>}
+    <button className="crow-guide-avatar" aria-expanded={open} aria-label="Open CrowFlix helper" onClick={() => setOpen((value) => !value)}><img src={CROW_HELPER_PIXEL_IMAGE} alt="Animated pixel CrowFlix helper" /><span>?</span></button>
+  </aside>;
 }
 
 function Header({ view, onView, query, onQuery, onSource, canAddSource }: { view: View; onView: (view: View) => void; query: string; onQuery: (value: string) => void; onSource: () => void; canAddSource: boolean }) {
@@ -1136,9 +1187,41 @@ function ChannelRail({ title, channels, programmes, clock, favourites, onPlay, o
   return <section className="rail-section"><div className="section-heading"><h2>{title}</h2><span>{channels.length.toLocaleString()} channels</span></div><div className="rail-wrap"><button className="rail-arrow left" aria-label={`Scroll ${title} left`} onClick={() => railRef.current?.scrollBy({ left: -900, behavior: "smooth" })}><CaretLeft /></button><div className="channel-rail" ref={railRef}>{channels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><button className="rail-arrow right" aria-label={`Scroll ${title} right`} onClick={() => railRef.current?.scrollBy({ left: 900, behavior: "smooth" })}><CaretRight /></button></div></section>;
 }
 
+function HoverPreview({ channel }: { channel: Channel }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const previewTarget = useMemo(() => ({
+    ...channel,
+    sources: channelSources(channel).flatMap(toWebPlayableSources),
+  }), [channel]);
+  const playback = usePlaybackController(previewTarget, videoRef);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = true;
+    video.volume = 0;
+  }, [playback.status]);
+  return <div className="channel-preview" aria-hidden="true">
+    <video ref={videoRef} muted autoPlay playsInline poster={MASCOT_IMAGE} />
+    <span>{playback.status === "playing" ? "MUTED PREVIEW" : playback.status === "failed" ? "PREVIEW UNAVAILABLE" : "STARTING PREVIEW…"}</span>
+  </div>;
+}
+
 function ChannelCard({ channel, programme, favourite, onPlay, onFavourite, onInfo }: { channel: Channel; programme?: Programme; favourite: boolean; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onInfo: (channel: Channel) => void }) {
   const availability = useContext(PlaybackAvailabilityContext)[channel.key] || "unverified";
-  return <article className="channel-card"><button className="card-main" onClick={() => onPlay(channel)}><div className="card-image">{channel.logo ? <img src={channel.logo} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; event.currentTarget.className = "fallback-logo"; }} /> : <img className="fallback-logo" src={BRAND_ICON} alt="" />}<span className={`live-badge availability-${availability}`}>{availabilityLabel(availability)}</span><span className="quality-badge">{channelQuality(channel)}</span><span className="play-overlay"><Play weight="fill" /></span></div><div className="card-copy"><strong>{programme?.title || channel.name}</strong><span>{channel.name}</span><small>{countryName(channel.country)} · {titleCase(channel.categories[0])}</small></div></button><button className="details-button" onClick={() => onInfo(channel)} aria-label={`Show ${channel.name} details`}><Info /></button><button className="heart-button" onClick={() => onFavourite(channel)} aria-label={`Toggle ${channel.name} favourite`}><Heart weight={favourite ? "fill" : "regular"} /></button></article>;
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewTimer = useRef<number | undefined>(undefined);
+  const canPreview = channelSources(channel).length > 0;
+  const startPreview = () => {
+    if (!canPreview) return;
+    window.clearTimeout(previewTimer.current);
+    previewTimer.current = window.setTimeout(() => setPreviewOpen(true), 650);
+  };
+  const stopPreview = () => {
+    window.clearTimeout(previewTimer.current);
+    setPreviewOpen(false);
+  };
+  useEffect(() => () => window.clearTimeout(previewTimer.current), []);
+  return <article className="channel-card" onPointerEnter={(event) => { if (event.pointerType === "mouse") startPreview(); }} onPointerLeave={stopPreview}><button className="card-main" onClick={() => onPlay(channel)}><div className="card-image">{channel.logo ? <img src={channel.logo} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; event.currentTarget.className = "fallback-logo"; }} /> : <img className="fallback-logo" src={BRAND_ICON} alt="" />}{previewOpen && <HoverPreview channel={channel} />}<span className={`live-badge availability-${availability}`}>{availabilityLabel(availability)}</span><span className="quality-badge">{channelQuality(channel)}</span><span className="play-overlay"><Play weight="fill" /></span></div><div className="card-copy"><strong>{programme?.title || channel.name}</strong><span>{channel.name}</span><small>{countryName(channel.country)} · {titleCase(channel.categories[0])}</small></div></button><button className="details-button" onClick={() => onInfo(channel)} aria-label={`Show ${channel.name} details`}><Info /></button><button className="heart-button" onClick={() => onFavourite(channel)} aria-label={`Toggle ${channel.name} favourite`}><Heart weight={favourite ? "fill" : "regular"} /></button></article>;
 }
 
 type LiveViewProps = {
@@ -1164,6 +1247,7 @@ type LiveViewProps = {
 function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, subdivision, setSubdivision, city, setCity, timezone, setTimezone, owner, setOwner, network, setNetwork, feed, setFeed, provider, setProvider, favourites, programmes, clock, onPlay, onFavourite, onInfo }: LiveViewProps) {
   const [catalogOrder, setCatalogOrder] = useState<"preferred" | "alphabetical">("preferred");
   const [page, setPage] = useState(1);
+  const [exploreOpen, setExploreOpen] = useState<BrowseMode | null>(null);
   const visibleChannels = useMemo(() => catalogOrder === "preferred"
     ? channels
     : [...channels].sort((left, right) => left.name.localeCompare(right.name)),
@@ -1250,8 +1334,9 @@ function LiveView({ catalog, channels, mode, setMode, category, setCategory, cou
   ].filter((label): label is string => Boolean(label));
   return <div className="browse-page">
     <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television · Australia, United States & English first</span><h1>Browse Live TV</h1><p>The complete matching catalogue stays visible. Australian and American English channels lead by default; every country and language remains searchable, filterable, and reachable.</p></div><div className="catalog-number"><strong>{visibleChannels.length.toLocaleString()}</strong><span>catalogued · {matchingSources.toLocaleString()} sources</span></div></div>
-    <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{browseModes.map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{activeFilterLabels.map((label, index) => <b key={`${label}-${index}`}>{label}</b>)}<button onClick={clearAll}>Clear all</button></div></aside>
-      <section className="browse-results"><div className="filter-strip"><button className={selected === "all" ? "active" : ""} onClick={() => select("all")}>All</button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => select(item.id)}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}</span></div><div className="availability-switch"><button className={catalogOrder === "preferred" ? "active" : ""} onClick={() => setCatalogOrder("preferred")}>Australia / US / English first</button><button className={catalogOrder === "alphabetical" ? "active" : ""} onClick={() => setCatalogOrder("alphabetical")}>A–Z</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{pageChannels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>
+    <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{browseModes.map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} aria-expanded={exploreOpen === id} aria-controls="live-explore-popout" onClick={() => { setMode(id); setExploreOpen((open) => open === id ? null : id); }}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{activeFilterLabels.map((label, index) => <b key={`${label}-${index}`}>{label}</b>)}<button onClick={clearAll}>Clear all</button></div></aside>
+      {exploreOpen && <section id="live-explore-popout" className="explore-popout" role="dialog" aria-label={`Choose ${titleCase(exploreOpen)}`}><header><span><ListBullets /> Explore {titleCase(exploreOpen)}</span><button aria-label="Close Explore menu" onClick={() => setExploreOpen(null)}><X /></button></header><div className="explore-popout-options"><button className={selected === "all" ? "active" : ""} onClick={() => { select("all"); setExploreOpen(null); }}><span>All {titleCase(exploreOpen)}</span><small>{visibleChannels.length.toLocaleString()}</small></button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => { select(item.id); setExploreOpen(null); }}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div></section>}
+      <section className="browse-results"><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}</span></div><div className="availability-switch"><button className={catalogOrder === "preferred" ? "active" : ""} onClick={() => setCatalogOrder("preferred")}>Australia / US / English first</button><button className={catalogOrder === "alphabetical" ? "active" : ""} onClick={() => setCatalogOrder("alphabetical")}>A–Z</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{pageChannels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>
   </div>;
 }
 

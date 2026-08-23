@@ -7,13 +7,15 @@ The browser application uses the approved Crow-Flix visual identity under
 
 - `crow-mascot.png` — approved cybernetic Crow-Flix mascot.
 - `crow-head.png` — approved application icon and browser favicon.
+- `crow-helper-pixel.webp` — Crow-owned Pixelorama-style helper crow reused
+  from the CrowBot asset set for the optional animated CrowFlix helper.
 - `fonts/**` — Crow Bitfeather display and mono web fonts.
 - `cursors/**` — Crow Talon cursor masters and browser-compatible PNG forms.
 
-These files were recovered byte-for-byte from the final verified browser
-deployment source commit
-`681139b6afc9189fec53a2e45b31a2bc08c2e4a3`. Their complete SHA-256 inventory
-is in `ASSET-MANIFEST.sha256`.
+The core Crow-Flix assets were recovered byte-for-byte from the final verified
+browser deployment source commit `681139b6afc9189fec53a2e45b31a2bc08c2e4a3`.
+The helper crow is separately retained under Crow's brand ownership. Their
+complete SHA-256 inventory is in `ASSET-MANIFEST.sha256`.
 
 The assets are licensed only under `LicenseRef-Crow-Brand`, not the AGPL. Keep
 this notice, `LICENSING.md`, the custom licence, and the manifest with any
