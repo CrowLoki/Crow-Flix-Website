@@ -1,5 +1,9 @@
+import {
+  OFFICIAL_FREE_COLLECTION_DRAFTS,
+} from "./officialFreeCollection";
+
 export const WEB_DESTINATION_SCHEMA = "crowflix-web-destinations";
-export const WEB_DESTINATION_VERSION = 1;
+export const WEB_DESTINATION_VERSION = 2;
 export const WEB_DESTINATION_STORAGE_KEY = "crowflix:web-destinations:v1";
 
 export const MAX_WEB_DESTINATION_IMPORT_BYTES = 2 * 1024 * 1024;
@@ -28,12 +32,13 @@ export type WebDestinationDraft = Omit<WebDestination, "id"> & {
 export type WebDestinationLoadResult = {
   items: WebDestination[];
   error?: string;
+  migrated?: boolean;
 };
 
 type WebDestinationEnvelope = {
   schema: typeof WEB_DESTINATION_SCHEMA;
-  version: typeof WEB_DESTINATION_VERSION;
-  items: WebDestination[];
+  version: number;
+  items: unknown;
 };
 
 const directorySeedDrafts: WebDestinationDraft[] = [
@@ -105,7 +110,23 @@ const directorySeedDrafts: WebDestinationDraft[] = [
 
 // These are links to the directory pages themselves. CrowFlix does not copy or
 // redistribute the unlicensed provider lists published on those pages.
-const seedDrafts: WebDestinationDraft[] = directorySeedDrafts;
+const officialFreeCollectionDrafts: WebDestinationDraft[] =
+  OFFICIAL_FREE_COLLECTION_DRAFTS.map((item) => ({
+    ...item,
+    categories: ["CrowFlix Free Collection"],
+    note: "CrowFlix selection · opens the original official publisher page. Free availability and regional catalogue remain controlled by that publisher and YouTube.",
+    sourceDirectory: "CrowFlix Free Collection",
+  }));
+
+export const OFFICIAL_FREE_WEB_DESTINATIONS = mergeWebDestinations(
+  [],
+  officialFreeCollectionDrafts.map((item) => normalizeWebDestination(item)),
+);
+
+const seedDrafts: WebDestinationDraft[] = [
+  ...officialFreeCollectionDrafts,
+  ...directorySeedDrafts,
+];
 
 export const DEFAULT_WEB_DESTINATIONS = mergeWebDestinations(
   [],
@@ -196,6 +217,13 @@ export function normalizeWebDestination(value: unknown): WebDestination {
 }
 
 export function parseWebDestinationImport(text: string): WebDestination[] {
+  return parseWebDestinationDocument(text).items;
+}
+
+function parseWebDestinationDocument(text: string): {
+  items: WebDestination[];
+  version?: number;
+} {
   if (
     new TextEncoder().encode(text).byteLength >
     MAX_WEB_DESTINATION_IMPORT_BYTES
@@ -211,6 +239,7 @@ export function parseWebDestinationImport(text: string): WebDestination[] {
   }
 
   let items: unknown;
+  let version: number | undefined;
   if (Array.isArray(parsed)) {
     items = parsed;
   } else if (parsed && typeof parsed === "object") {
@@ -218,9 +247,10 @@ export function parseWebDestinationImport(text: string): WebDestination[] {
     if (envelope.schema !== WEB_DESTINATION_SCHEMA) {
       throw new Error("That file is not a CrowFlix website backup.");
     }
-    if (envelope.version !== WEB_DESTINATION_VERSION) {
+    if (envelope.version !== 1 && envelope.version !== WEB_DESTINATION_VERSION) {
       throw new Error("That CrowFlix website backup version is not supported.");
     }
+    version = envelope.version;
     items = envelope.items;
   }
 
@@ -237,7 +267,7 @@ export function parseWebDestinationImport(text: string): WebDestination[] {
   // Canonicalization adds the normalized ID/category fields. Confirm that
   // canonical form remains within every save/load invariant too.
   serializeWebDestinations(normalized);
-  return normalized;
+  return { items: normalized, version };
 }
 
 export function mergeWebDestinations(
@@ -298,7 +328,17 @@ export function loadWebDestinations(
   if (raw === null) return { items: [...fallback] };
 
   try {
-    return { items: parseWebDestinationImport(raw) };
+    const parsed = parseWebDestinationDocument(raw);
+    if (parsed.version === 1) {
+      return {
+        items: mergeWebDestinations(
+          parsed.items,
+          OFFICIAL_FREE_WEB_DESTINATIONS,
+        ),
+        migrated: true,
+      };
+    }
+    return { items: parsed.items };
   } catch (error) {
     return {
       items: [...fallback],

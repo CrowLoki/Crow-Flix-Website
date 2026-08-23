@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WEB_DESTINATIONS,
   MAX_WEB_DESTINATIONS,
+  OFFICIAL_FREE_WEB_DESTINATIONS,
   WEB_DESTINATION_SCHEMA,
   WEB_DESTINATION_STORAGE_KEY,
   WEB_DESTINATION_VERSION,
@@ -322,7 +323,7 @@ describe("web destination library behavior", () => {
   });
 
   it("searches titles, categories, directory names, and hostnames", () => {
-    expect(DEFAULT_WEB_DESTINATIONS).toHaveLength(8);
+    expect(DEFAULT_WEB_DESTINATIONS.length).toBeGreaterThanOrEqual(60);
     expect(
       new Set(DEFAULT_WEB_DESTINATIONS.map((item) => item.url)).size,
     ).toBe(DEFAULT_WEB_DESTINATIONS.length);
@@ -348,6 +349,19 @@ describe("web destination library behavior", () => {
       "",
       "Live TV",
     ).every((item) => item.note?.includes("directory"))).toBe(true);
+    expect(
+      filterWebDestinations(
+        DEFAULT_WEB_DESTINATIONS,
+        "",
+        "CrowFlix Free Collection",
+      ),
+    ).toEqual(OFFICIAL_FREE_WEB_DESTINATIONS);
+    expect(
+      filterWebDestinations(DEFAULT_WEB_DESTINATIONS, "gundaminfo"),
+    ).toEqual([expect.objectContaining({
+      title: "Gundaminfo",
+      sourceDirectory: "CrowFlix Free Collection",
+    })]);
   });
 
   it("seeds directory pages without copying provider entries", () => {
@@ -374,6 +388,29 @@ describe("web destination library behavior", () => {
     const corrupt = loadWebDestinations({ getItem: () => "not json" });
     expect(corrupt.items).toEqual(DEFAULT_WEB_DESTINATIONS);
     expect(corrupt.error).toContain("valid JSON");
+  });
+
+  it("adds the CrowFlix Free Collection once when upgrading a saved v1 library", () => {
+    const legacy = JSON.stringify({
+      schema: WEB_DESTINATION_SCHEMA,
+      version: 1,
+      items: [{
+        title: "My saved website",
+        url: "https://saved.example/",
+        category: "Saved",
+      }],
+    });
+    const loaded = loadWebDestinations({ getItem: () => legacy });
+
+    expect(loaded.migrated).toBe(true);
+    expect(loaded.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "My saved website" }),
+      expect.objectContaining({ title: "Gundaminfo" }),
+    ]));
+    expect(loaded.items).toHaveLength(OFFICIAL_FREE_WEB_DESTINATIONS.length + 1);
+    expect(JSON.parse(serializeWebDestinations(loaded.items))).toMatchObject({
+      version: WEB_DESTINATION_VERSION,
+    });
   });
 
   it("stores the versioned backup and reports quota errors", () => {
