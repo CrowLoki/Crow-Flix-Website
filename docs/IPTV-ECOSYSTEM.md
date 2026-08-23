@@ -60,7 +60,10 @@ not discarded:
 - state/province;
 - city;
 - timezone;
-- logical feed and source alternatives.
+- owner and network;
+- logical feed;
+- source provider/provenance;
+- individual source alternatives.
 
 The current additive provider layer also loads fixed bounded raw playlists for
 the browser's Australian region, New Zealand, and world feeds. Known provider
@@ -114,9 +117,8 @@ the automatic guide pipeline.
 
 ## Capability audit still in progress
 
-The full goal remains active. Important remaining work includes deeper source
-group/provenance navigation, richer owner/network/feed detail in channel UI,
-more guide providers and mappings for countries with low coverage,
+The full goal remains active. Important remaining work includes more guide
+providers and mappings for countries with low coverage,
 catch-up/recording only where a source lawfully publishes the required
 metadata, and broader real-device/browser acceptance. Passing CI or a single
 sample is not completion evidence for those items.

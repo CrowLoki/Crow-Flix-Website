@@ -91,6 +91,14 @@ indicator in the player opens a complete source chooser, where any preserved
 feed and its direct or relay delivery route can be selected explicitly without
 exposing provider URLs, credentials, or request headers.
 
+Live TV exposes owners, networks, logical feeds, and source providers alongside
+the category, language, and geographic dimensions. Every channel card also has
+a details view for channel/feed identity, alternate names, ownership, network,
+broadcast areas, timezones, launch/replacement metadata, lawful channel website,
+and every preserved source's host, provenance, quality, transport, HTTPS state,
+and provider-header requirement. These filters and details never remove data
+from the underlying catalogue.
+
 Because IPTV-org no longer publishes stream-status fields, the browser also
 uses the free, MIT-licensed
 [IPTV Nexus](https://github.com/dearbulut/iptv) static health index as an

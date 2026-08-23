@@ -37,6 +37,10 @@ function baseCatalog(): WebCatalog {
     subdivisions: [],
     cities: [],
     timezones: [{ id: "Australia/Brisbane", name: "Australia/Brisbane", count: 1 }],
+    owners: [],
+    networks: [],
+    feeds: [{ id: "__main__", name: "Main feed", count: 1 }],
+    providers: [{ id: "IPTV-org", name: "IPTV-org", count: 1 }],
     updatedAt: "2026-08-23T00:00:00.000Z",
     source: "IPTV-org API",
   };
@@ -114,6 +118,8 @@ describe("personal M3U imports", () => {
     expect(merged.languages.find((item) => item.id === "English")?.count).toBe(2);
     expect(merged.regions.find((item) => item.code === "OCE")?.count).toBe(2);
     expect(merged.timezones.find((item) => item.id === "Australia/Sydney")?.count).toBe(1);
+    expect(merged.feeds.find((item) => item.id === "__main__")?.count).toBe(2);
+    expect(merged.providers.find((item) => item.name === "Personal M3U · personal.m3u")?.count).toBe(1);
     expect(merged.source).toBe("IPTV-org API + personal playlist");
 
     const repeated = mergePersonalPlaylistIntoCatalog(merged, imported);

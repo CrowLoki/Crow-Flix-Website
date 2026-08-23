@@ -80,6 +80,8 @@ describe("buildCatalogFromApi", () => {
     expect(channel.replacedBy).toBe("FutureNews.us");
     expect(channel.sources[0].transport).toBe("hls");
     expect(channel.sources[0].isHttps).toBe(true);
+    expect(channel.sources[0].provenance).toBe("IPTV-org");
+    expect(channel.provenance).toEqual(["IPTV-org"]);
     expect(catalog.categories[0]).toMatchObject({ id: "news", count: 1 });
     expect(catalog.countries[0]).toMatchObject({ code: "US", count: 1 });
     expect(catalog.regions[0]).toMatchObject({ code: "AMER", count: 1 });
@@ -87,6 +89,10 @@ describe("buildCatalogFromApi", () => {
     expect(catalog.subdivisions[0]).toMatchObject({ id: "US-CA", count: 1 });
     expect(catalog.cities[0]).toMatchObject({ id: "USLAX", count: 1 });
     expect(catalog.timezones[0]).toMatchObject({ id: "America/Los_Angeles", count: 1 });
+    expect(catalog.owners[0]).toMatchObject({ id: "Crow", count: 1 });
+    expect(catalog.networks[0]).toMatchObject({ id: "CrowNet", count: 1 });
+    expect(catalog.feeds[0]).toMatchObject({ id: "main", count: 1 });
+    expect(catalog.providers[0]).toMatchObject({ id: "IPTV-org", count: 1 });
   });
 
   it("excludes blocklisted and closed channels but keeps unknown channel ids", () => {
@@ -367,6 +373,7 @@ describe("Apsattv Amagi fallbacks", () => {
     );
     expect(parsed).toHaveLength(1);
     expect(parsed[0].url).toBe(ANI_ONE_CURRENT_URL);
+    expect(parsed[0].provenance).toBe("Apsattv public FAST playlist");
   });
 
   it("preserves regional metadata, rejects title collisions, and deduplicates", () => {
@@ -416,6 +423,7 @@ describe("Apsattv Amagi fallbacks", () => {
       userAgent: "Regional Agent/1.0",
       quality: "720p",
       label: "Geo-blocked",
+      provenance: "Apsattv public FAST playlist",
     });
     expect(overlayAmagiFastFallbacks([channel], fallbacks)).toBe(0);
     expect(channel.sources).toHaveLength(2);
@@ -446,6 +454,7 @@ describe("Apsattv Amagi fallbacks", () => {
       .toEqual([...OPTIONAL_FAST_PLAYLISTS].sort());
     expect(sources).toHaveLength(1);
     expect(sources[0].url).toBe(currentUrl);
+    expect(sources[0].provenance).toBe("Apsattv public FAST playlist");
   });
 
   it("aborts slow optional playlist requests after twelve seconds", async () => {

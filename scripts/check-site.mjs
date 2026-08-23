@@ -35,6 +35,7 @@ for (const file of [
   "src/App.css",
   "src/webCatalog.ts",
   "src/additivePlaylists.ts",
+  "src/catalogMetadata.ts",
   "src/guideNavigation.ts",
   "src/personalSources.ts",
   "src/streamHealthIndex.ts",
@@ -88,7 +89,7 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 
@@ -128,7 +129,7 @@ for (const value of ["streamGuidesJson", "32 * 1024 * 1024", "australianGuideSou
 }
 
 const webCatalog = await readFile(path.join(repositoryRoot, "src", "webCatalog.ts"), "utf8");
-for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "overlayAmagiFastFallbacks", "overlayVerifiedPublicFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "loadAdditivePlaylists", "overlayAdditivePlaylists", "regional/provider playlists", "verified public fallbacks", "recent source health", "current FAST fallbacks", "crowflix-catalog-v3", 'fetchJson<ApiSubdivision[]>("subdivisions")', 'fetchJson<ApiCity[]>("cities")', 'fetchJson<ApiTimezone[]>("timezones")']) {
+for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "overlayAmagiFastFallbacks", "overlayVerifiedPublicFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "loadAdditivePlaylists", "overlayAdditivePlaylists", "regional/provider playlists", "verified public fallbacks", "recent source health", "current FAST fallbacks", "crowflix-catalog-v4", "ownerCounts", "networkCounts", "feedCounts", "providerCounts", 'fetchJson<ApiSubdivision[]>("subdivisions")', 'fetchJson<ApiCity[]>("cities")', 'fetchJson<ApiTimezone[]>("timezones")']) {
   assert(webCatalog.includes(value), `Catalogue fallback repair is missing: ${value}`);
 }
 
@@ -140,6 +141,11 @@ for (const value of ["raw-tv.m3u8", "MAX_ADDITIVE_PLAYLIST_BYTES", "MAX_ADDITIVE
 const personalSources = await readFile(path.join(repositoryRoot, "src", "personalSources.ts"), "utf8");
 for (const value of ["parsePersonalPlaylist", "mergePersonalPlaylistIntoCatalog", "parsePersonalXmltv", "parsePersonalXmltvFile", "MAX_PERSONAL_PLAYLIST_ENTRIES", "Personal M3U", "Personal XMLTV"]) {
   assert(personalSources.includes(value), `Personal browser source support is missing: ${value}`);
+}
+
+const catalogMetadata = await readFile(path.join(repositoryRoot, "src", "catalogMetadata.ts"), "utf8");
+for (const value of ["channelProviders", "channelMatchesMetadataFilters", "sourceHostname", "MAIN_FEED_OPTION_ID"]) {
+  assert(catalogMetadata.includes(value), `Catalogue metadata navigation is missing: ${value}`);
 }
 
 const streamHealth = await readFile(path.join(repositoryRoot, "src", "streamHealthIndex.ts"), "utf8");

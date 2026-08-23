@@ -25,8 +25,9 @@ import {
   streamSourceHealthIdentity,
 } from "./streamHealthIndex";
 
-export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v3";
-export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v3";
+export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v4";
+export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v4";
+export const MAIN_FEED_OPTION_ID = "__main__";
 const WEB_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
 const API_BASE = "https://iptv-org.github.io/api";
 const FETCH_TIMEOUT_MS = 45_000;
@@ -97,6 +98,10 @@ export type WebCatalog = {
   subdivisions: NamedOption[];
   cities: NamedOption[];
   timezones: NamedOption[];
+  owners: NamedOption[];
+  networks: NamedOption[];
+  feeds: NamedOption[];
+  providers: NamedOption[];
   updatedAt: string;
   source: string;
 };
@@ -307,6 +312,7 @@ function makeStreamSource(
   userAgent?: string | null,
   quality?: string | null,
   label?: string | null,
+  provenance?: string | null,
 ): StreamSource | null {
   const normalized = normalizeHttpUrl(url);
   if (!normalized) return null;
@@ -323,6 +329,7 @@ function makeStreamSource(
     isHttps,
     requiresHeaders: false,
     preferenceScore: 0,
+    provenance: normalizePlainText(provenance, 256) || undefined,
   };
   source.requiresHeaders = Boolean(source.referrer || source.userAgent);
   source.id = sourceId(source.url, source.userAgent, source.referrer);
@@ -471,11 +478,11 @@ function normalizeChannelSources(channel: WebChannel): void {
   const existing = channel.sources;
   channel.sources = [];
   if (!existing.length) {
-    const source = makeStreamSource(null, channel.url || "", channel.referrer, channel.userAgent, channel.quality, channel.label);
+    const source = makeStreamSource(null, channel.url || "", channel.referrer, channel.userAgent, channel.quality, channel.label, channel.provenance?.[0]);
     if (source) addSource(channel, source);
   } else {
     for (const item of existing) {
-      const source = makeStreamSource(item.title ?? null, item.url, item.referrer, item.userAgent, item.quality, item.label);
+      const source = makeStreamSource(item.title ?? null, item.url, item.referrer, item.userAgent, item.quality, item.label, item.provenance);
       if (source) addSource(channel, source);
     }
   }
@@ -595,6 +602,7 @@ function repairedAmagiSource(source: StreamSource): StreamSource | null {
     source.userAgent,
     source.quality,
     source.label,
+    source.provenance,
   );
   return makeStreamSource(
     source.title ?? null,
@@ -603,6 +611,7 @@ function repairedAmagiSource(source: StreamSource): StreamSource | null {
     source.userAgent,
     source.quality,
     source.label,
+    source.provenance,
   );
 }
 
@@ -654,7 +663,11 @@ export function parseOptionalFastPlaylist(content: string): StreamSource[] {
     playableEntries += 1;
     if (playableEntries > MAX_OPTIONAL_FAST_PLAYLIST_ENTRIES) return [];
     const rawUrl = line.split("|", 1)[0].trim();
-    const source = repairedAmagiSource({ title: pendingTitle, url: rawUrl });
+    const source = repairedAmagiSource({
+      title: pendingTitle,
+      url: rawUrl,
+      provenance: "Apsattv public FAST playlist",
+    });
     pendingTitle = null;
     if (source) sources.push(source);
   }
@@ -702,10 +715,15 @@ export function overlayAmagiFastFallbacks(
           fallback.userAgent ?? template.userAgent,
           fallback.quality ?? template.quality,
           fallback.label ?? template.label,
+          fallback.provenance ?? template.provenance,
         );
         if (!candidate) continue;
         if (!channel.sources.some((source) => source.id === candidate.id)) added += 1;
         addSource(channel, candidate);
+        if (candidate.provenance) {
+          channel.provenance ||= [];
+          mergeUnique(channel.provenance, [candidate.provenance]);
+        }
       }
     }
     sortAndSyncSources(channel);
@@ -776,6 +794,7 @@ export function overlayAdditivePlaylists(
       entry.userAgent,
       null,
       null,
+      entry.config.name,
     );
     if (!source) continue;
     source.provenance = entry.config.name;
@@ -834,6 +853,7 @@ export function overlayVerifiedPublicFallbacks(channels: WebChannel[]): number {
       null,
       null,
       fallback.label,
+      fallback.provenance,
     );
     if (!source) continue;
     source.provenance = fallback.provenance;
@@ -952,13 +972,14 @@ function channelFromApiStream(
     if (!title) return null;
     const [displayName, identity] = title;
     const id = `uncatalogued-${fnv1a64(identity).toString(16).padStart(16, "0")}`;
-    const source = makeStreamSource(displayName, stream.url, stream.referrer, stream.user_agent, stream.quality, stream.label);
+    const source = makeStreamSource(displayName, stream.url, stream.referrer, stream.user_agent, stream.quality, stream.label, "IPTV-org");
     if (!source) return null;
     return {
       key: logicalChannelKey(id, null), id, feed: null, name: displayName, logo: null,
       categories: ["undefined"], country: null, languages: [], broadcastArea: [],
       sources: [source], url: source.url, referrer: source.referrer, userAgent: source.userAgent,
       quality: source.quality, label: source.label, format: null, network: null, website: null, isMain: true,
+      provenance: ["IPTV-org"],
     };
   }
 
@@ -978,7 +999,7 @@ ${feedId}`)) || channelLogos.get(channelId))?.url || null;
   const languages = (feed?.languages || []).map((code) => languageNames.get(code) || code);
   const feedAltNames = normalizePlainTextList(feed?.alt_names, 256);
   const timezones = normalizePlainTextList(feed?.timezones, 128);
-  const source = makeStreamSource(stream.title, stream.url, stream.referrer, stream.user_agent, stream.quality, stream.label);
+  const source = makeStreamSource(stream.title, stream.url, stream.referrer, stream.user_agent, stream.quality, stream.label, "IPTV-org");
   if (!source) return null;
 
   const apiChannel = channelMap.get(channelId);
@@ -997,7 +1018,7 @@ ${feedId}`)) || channelLogos.get(channelId))?.url || null;
       sources: [source], url: source.url, referrer: source.referrer, userAgent: source.userAgent,
       quality: source.quality, label: source.label, format: feed?.format ?? null,
       network: null, website: null, launched: null, replacedBy: null,
-      isNsfw: false, isMain: feed?.is_main ?? !explicitFeedId,
+      isNsfw: false, provenance: ["IPTV-org"], isMain: feed?.is_main ?? !explicitFeedId,
     };
   }
 
@@ -1022,6 +1043,7 @@ ${feedId}`)) || channelLogos.get(channelId))?.url || null;
     launched: apiChannel.launched ?? null,
     replacedBy: apiChannel.replaced_by ?? null,
     isNsfw: Boolean(apiChannel.is_nsfw),
+    provenance: ["IPTV-org"],
     isMain: feed?.is_main ?? !explicitFeedId,
   };
 }
@@ -1178,9 +1200,22 @@ ${logo.feed}`;
 
   const categoryCounts = new Map<string, number>();
   const languageCounts = new Map<string, number>();
+  const ownerCounts = new Map<string, number>();
+  const networkCounts = new Map<string, number>();
+  const feedCounts = new Map<string, number>();
+  const providerCounts = new Map<string, number>();
   for (const channel of channels) {
     for (const category of channel.categories) categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
     for (const language of channel.languages) languageCounts.set(language, (languageCounts.get(language) || 0) + 1);
+    for (const owner of new Set(channel.owners || [])) ownerCounts.set(owner, (ownerCounts.get(owner) || 0) + 1);
+    if (channel.network) networkCounts.set(channel.network, (networkCounts.get(channel.network) || 0) + 1);
+    const feed = channel.feed || MAIN_FEED_OPTION_ID;
+    feedCounts.set(feed, (feedCounts.get(feed) || 0) + 1);
+    const providers = new Set([
+      ...(channel.provenance || []),
+      ...channel.sources.map((source) => source.provenance).filter((value): value is string => Boolean(value)),
+    ]);
+    for (const provider of providers) providerCounts.set(provider, (providerCounts.get(provider) || 0) + 1);
   }
   const [countryCounts, regionCounts] = coverageOptionCounts(channels, api.regions);
   const dimensionCounts = preciseDimensionCounts(channels);
@@ -1227,10 +1262,20 @@ ${logo.feed}`;
     }))
     .filter((timezone) => timezone.count > 0)
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const namedOptions = (
+    counts: Map<string, number>,
+    display: (id: string) => string = (id) => id,
+  ): NamedOption[] => [...counts.entries()]
+    .map(([id, count]) => ({ id, name: display(id), description: null, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const owners = namedOptions(ownerCounts);
+  const networks = namedOptions(networkCounts);
+  const feeds = namedOptions(feedCounts, (id) => id === MAIN_FEED_OPTION_ID ? "Main feed" : id);
+  const providers = namedOptions(providerCounts);
 
   return {
     channels, categories, countries, languages, regions,
-    subdivisions, cities, timezones,
+    subdivisions, cities, timezones, owners, networks, feeds, providers,
     updatedAt: now.toISOString(),
     source: [
       "IPTV-org API",
