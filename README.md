@@ -99,6 +99,9 @@ broadcast areas, timezones, launch/replacement metadata, lawful channel website,
 and every preserved source's host, provenance, quality, transport, HTTPS state,
 and provider-header requirement. These filters and details never remove data
 from the underlying catalogue.
+When multiple catalogues publish the same exact URL/header identity, CrowFlix
+keeps one playback route and records every contributing provider instead of
+overwriting lineage or duplicating the stream.
 
 Because IPTV-org no longer publishes stream-status fields, the browser also
 uses the free, MIT-licensed

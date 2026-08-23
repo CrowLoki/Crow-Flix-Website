@@ -464,6 +464,25 @@ describe("Apsattv Amagi fallbacks", () => {
     expect(channel.sources).toHaveLength(2);
   });
 
+  it("keeps every contributor when IPTV-org and Apsattv publish the exact same source", () => {
+    const catalog = buildCatalogFromApi(payload({
+      channels: [{ id: "Shared.ph", name: "Shared Channel", country: "PH" }],
+      streams: [{ channel: "Shared.ph", title: "Shared Channel", url: regionalUrl }],
+    }), new Date(), [{
+      title: "Shared Channel",
+      url: regionalUrl,
+      provenance: "Apsattv public FAST playlist",
+    }]);
+
+    expect(catalog.channels[0].sources).toHaveLength(1);
+    expect(catalog.channels[0].sources[0]).toMatchObject({
+      provenance: "IPTV-org",
+      provenances: ["Apsattv public FAST playlist", "IPTV-org"],
+    });
+    expect(catalog.providers.map((provider) => provider.id))
+      .toEqual(expect.arrayContaining(["IPTV-org", "Apsattv public FAST playlist"]));
+  });
+
   it("uses all five fixed relay fetches while treating failures and oversized results as optional", async () => {
     const playlist = `#EXTM3U\n#EXTINF:-1,4099 Regional\n${currentUrl}\n`;
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

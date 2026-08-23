@@ -72,6 +72,7 @@ describe("personal M3U imports", () => {
       provenance: ["Personal M3U · channels.m3u"],
     });
     expect(channels[0]?.sources).toHaveLength(2);
+    expect(channels[0]?.sources[0]?.provenances).toEqual(["Personal M3U · channels.m3u"]);
     expect(channels[0]?.sources).toEqual(expect.arrayContaining([
       expect.objectContaining({
         url: "https://provider.test/abc.m3u8",

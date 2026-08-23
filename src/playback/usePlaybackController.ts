@@ -602,7 +602,8 @@ export class PlaybackRun {
       sourceOptions: this.orderedSources.map((option, index) => ({
         index,
         sourceId: sourceIdentifier(option, index),
-        label: option.provenance
+        label: option.provenances?.join(" + ")
+          || option.provenance
           || option.title
           || option.label
           || `Source ${index + 1}`,

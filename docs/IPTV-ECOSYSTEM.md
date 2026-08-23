@@ -70,6 +70,8 @@ the browser's Australian region, New Zealand, and world feeds. Known provider
 IDs or unique semantic names contribute alternate sources to existing logical
 feeds. Unmatched entries become provenance-labelled channels rather than being
 discarded. Exact URL/header identities remain deduplicated.
+An exact source shared by multiple catalogues retains all contributor names;
+deduplication changes route count only and never erases lineage.
 Current individually verified public fallbacks are tracked in source with an
 exact channel ID, distinct feed label, and provenance. They augment rather than
 replace upstream sources.

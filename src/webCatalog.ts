@@ -25,8 +25,8 @@ import {
   streamSourceHealthIdentity,
 } from "./streamHealthIndex";
 
-export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v5";
-export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v5";
+export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v6";
+export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v6";
 export const MAIN_FEED_OPTION_ID = "__main__";
 const WEB_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
 const API_BASE = "https://iptv-org.github.io/api";
@@ -354,10 +354,15 @@ function makeStreamSource(
   quality?: string | null,
   label?: string | null,
   provenance?: string | null,
+  provenances: readonly string[] = [],
 ): StreamSource | null {
   const normalized = normalizeStreamUrl(url);
   if (!normalized) return null;
   const [normalizedUrl, isHttps] = normalized;
+  const sourceLineage = normalizePlainTextList([
+    ...(provenance ? [provenance] : []),
+    ...provenances,
+  ], 256);
   const source: StreamSource = {
     id: "",
     title: normalizePlainText(title, 256),
@@ -370,7 +375,8 @@ function makeStreamSource(
     isHttps,
     requiresHeaders: false,
     preferenceScore: 0,
-    provenance: normalizePlainText(provenance, 256) || undefined,
+    provenance: normalizePlainText(provenance, 256) || sourceLineage[0],
+    provenances: sourceLineage,
   };
   source.requiresHeaders = Boolean(source.referrer || source.userAgent);
   source.id = sourceId(source.url, source.userAgent, source.referrer);
@@ -438,7 +444,14 @@ function mergeSource(target: StreamSource, candidate: StreamSource): void {
   target.title = chooseText(target.title, candidate.title) ?? null;
   target.quality = chooseText(target.quality, candidate.quality) ?? null;
   target.label = chooseText(target.label, candidate.label) ?? null;
-  target.provenance = chooseText(target.provenance, candidate.provenance) ?? undefined;
+  const primaryProvenance = target.provenance || candidate.provenance;
+  target.provenances = normalizePlainTextList([
+    ...(target.provenances || []),
+    ...(target.provenance ? [target.provenance] : []),
+    ...(candidate.provenances || []),
+    ...(candidate.provenance ? [candidate.provenance] : []),
+  ], 256);
+  target.provenance = primaryProvenance || target.provenances[0];
   target.preferenceScore = sourcePreferenceScore(target);
 }
 
@@ -523,7 +536,7 @@ function normalizeChannelSources(channel: WebChannel): void {
     if (source) addSource(channel, source);
   } else {
     for (const item of existing) {
-      const source = makeStreamSource(item.title ?? null, item.url, item.referrer, item.userAgent, item.quality, item.label, item.provenance);
+      const source = makeStreamSource(item.title ?? null, item.url, item.referrer, item.userAgent, item.quality, item.label, item.provenance, item.provenances);
       if (source) addSource(channel, source);
     }
   }
@@ -644,6 +657,7 @@ function repairedAmagiSource(source: StreamSource): StreamSource | null {
     source.quality,
     source.label,
     source.provenance,
+    source.provenances,
   );
   return makeStreamSource(
     source.title ?? null,
@@ -653,6 +667,7 @@ function repairedAmagiSource(source: StreamSource): StreamSource | null {
     source.quality,
     source.label,
     source.provenance,
+    source.provenances,
   );
 }
 
@@ -757,6 +772,7 @@ export function overlayAmagiFastFallbacks(
           fallback.quality ?? template.quality,
           fallback.label ?? template.label,
           fallback.provenance ?? template.provenance,
+          fallback.provenances ?? template.provenances,
         );
         if (!candidate) continue;
         if (!channel.sources.some((source) => source.id === candidate.id)) added += 1;
@@ -1254,7 +1270,10 @@ ${logo.feed}`;
     feedCounts.set(feed, (feedCounts.get(feed) || 0) + 1);
     const providers = new Set([
       ...(channel.provenance || []),
-      ...channel.sources.map((source) => source.provenance).filter((value): value is string => Boolean(value)),
+      ...channel.sources.flatMap((source) => [
+        ...(source.provenances || []),
+        ...(source.provenance ? [source.provenance] : []),
+      ]),
     ]);
     for (const provider of providers) providerCounts.set(provider, (providerCounts.get(provider) || 0) + 1);
   }
