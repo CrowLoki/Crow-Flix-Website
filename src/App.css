@@ -59,21 +59,21 @@
   --warning: #f5bd55;
   --success: #4ce0a1;
   --radius: 14px;
-  --cursor-normal: url("/assets/brand/cursors/normal.cur"), url("/assets/brand/cursors/32/normal.png") 6 2, default;
-  --cursor-link: url("/assets/brand/cursors/link.cur"), url("/assets/brand/cursors/32/link.png") 6 2, pointer;
-  --cursor-help: url("/assets/brand/cursors/help.cur"), url("/assets/brand/cursors/32/help.png") 6 2, help;
-  --cursor-working: url("/assets/brand/cursors/working.cur"), url("/assets/brand/cursors/32/working.png") 6 2, progress;
-  --cursor-busy: url("/assets/brand/cursors/busy.cur"), url("/assets/brand/cursors/32/busy.png") 16 16, wait;
-  --cursor-text: url("/assets/brand/cursors/text.cur"), url("/assets/brand/cursors/32/text.png") 16 16, text;
-  --cursor-unavailable: url("/assets/brand/cursors/unavailable.cur"), url("/assets/brand/cursors/32/unavailable.png") 16 16, not-allowed;
-  --cursor-move: url("/assets/brand/cursors/move.cur"), url("/assets/brand/cursors/32/move.png") 16 16, move;
-  --cursor-precision: url("/assets/brand/cursors/precision.cur"), url("/assets/brand/cursors/32/precision.png") 16 16, crosshair;
-  --cursor-resize-h: url("/assets/brand/cursors/resize-h.cur"), url("/assets/brand/cursors/32/resize-h.png") 16 16, ew-resize;
-  --cursor-resize-v: url("/assets/brand/cursors/resize-v.cur"), url("/assets/brand/cursors/32/resize-v.png") 16 16, ns-resize;
-  --cursor-resize-d1: url("/assets/brand/cursors/resize-d1.cur"), url("/assets/brand/cursors/32/resize-d1.png") 16 16, nwse-resize;
-  --cursor-resize-d2: url("/assets/brand/cursors/resize-d2.cur"), url("/assets/brand/cursors/32/resize-d2.png") 16 16, nesw-resize;
-  --cursor-handwriting: url("/assets/brand/cursors/handwriting.cur"), url("/assets/brand/cursors/32/handwriting.png") 3 29, default;
-  --cursor-alternate: url("/assets/brand/cursors/alternate.cur"), url("/assets/brand/cursors/32/alternate.png") 16 1, default;
+  --cursor-normal: url("/assets/brand/cursors/16/normal.png") 3 1, default;
+  --cursor-link: url("/assets/brand/cursors/16/link.png") 3 1, pointer;
+  --cursor-help: url("/assets/brand/cursors/16/help.png") 3 1, help;
+  --cursor-working: url("/assets/brand/cursors/16/working.png") 3 1, progress;
+  --cursor-busy: url("/assets/brand/cursors/16/busy.png") 8 8, wait;
+  --cursor-text: url("/assets/brand/cursors/16/text.png") 8 8, text;
+  --cursor-unavailable: url("/assets/brand/cursors/16/unavailable.png") 8 8, not-allowed;
+  --cursor-move: url("/assets/brand/cursors/16/move.png") 8 8, move;
+  --cursor-precision: url("/assets/brand/cursors/16/precision.png") 8 8, crosshair;
+  --cursor-resize-h: url("/assets/brand/cursors/16/resize-h.png") 8 8, ew-resize;
+  --cursor-resize-v: url("/assets/brand/cursors/16/resize-v.png") 8 8, ns-resize;
+  --cursor-resize-d1: url("/assets/brand/cursors/16/resize-d1.png") 8 8, nwse-resize;
+  --cursor-resize-d2: url("/assets/brand/cursors/16/resize-d2.png") 8 8, nesw-resize;
+  --cursor-handwriting: url("/assets/brand/cursors/16/handwriting.png") 2 15, default;
+  --cursor-alternate: url("/assets/brand/cursors/16/alternate.png") 8 1, default;
 }
 
 * { box-sizing: border-box; }

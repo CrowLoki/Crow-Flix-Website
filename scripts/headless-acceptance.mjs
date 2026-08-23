@@ -150,6 +150,8 @@ try {
     cards: document.querySelectorAll('.channel-card').length,
     addSource: Boolean(document.querySelector('.source-button')),
     liveNav: [...document.querySelectorAll('.topbar nav button')].some((button) => button.textContent.includes('Live TV')),
+    audienceFirst: document.body.innerText.includes('Australia in English') && document.body.innerText.includes('American TV & Movies'),
+    smallCursor: getComputedStyle(document.documentElement).cursor.includes('/cursors/16/normal.png'),
     desktopDownload: document.body.innerText.includes('Download Crow-Flix for Windows'),
     status: document.querySelector('.status-bar')?.innerText || ''
   })`);
@@ -159,7 +161,8 @@ try {
     cards: document.querySelectorAll('.browse-results .channel-card').length,
     providers: document.body.innerText.includes('Source providers'),
     owners: document.body.innerText.includes('Owners'),
-    fullCopy: document.body.innerText.includes('complete matching catalogue stays visible')
+    fullCopy: document.body.innerText.includes('complete matching catalogue stays visible'),
+    preferredOrder: document.body.innerText.includes('Australia / US / English first')
   })`);
   const backgroundStreamRequests = await evaluate(`performance.getEntriesByType('resource')
     .map((entry) => entry.name)
@@ -182,16 +185,28 @@ try {
   })`);
   await evaluate("document.querySelector('.source-dialog .dialog-close')?.click()");
   await waitFor("!document.querySelector('.source-dialog')");
+  await evaluate(`[...document.querySelectorAll('.topbar nav button')].find((button) => button.textContent.includes('Guide'))?.click()`);
+  await waitFor("Boolean(document.querySelector('.guide-page'))");
+  const guideAudience = await evaluate(`(() => {
+    const options = [...document.querySelectorAll('.guide-controls select option')].map((option) => option.textContent || '');
+    return {
+      englishFirst: document.querySelector('.guide-controls label span')?.textContent.includes('English first') || false,
+      australiaFirst: options[0]?.includes('Australia') || false,
+      unitedStatesSecond: options[1]?.includes('United States') || false
+    };
+  })()`);
   await evaluate(`[...document.querySelectorAll('.topbar nav button')].find((button) => button.textContent.includes('CrowFlix Free'))?.click()`);
   await waitFor("document.querySelector('.web-library h1')?.textContent.includes('CrowFlix Free Collection')");
   const freeCollection = await evaluate(`(() => {
-    const card = [...document.querySelectorAll('.web-card')].find((item) => item.textContent.includes('Gundaminfo'));
+    const card = [...document.querySelectorAll('.web-card')].find((item) => item.textContent.includes('FilmRise'));
     return {
       heading: document.querySelector('.web-library h1')?.textContent || '',
       officialCategory: [...document.querySelectorAll('.web-category-strip button')].some((button) => button.textContent.includes('CrowFlix Free Collection')),
+      preferredCategory: [...document.querySelectorAll('.web-category-strip button')].some((button) => button.textContent.includes('Australia & United States')),
       officialCard: Boolean(card),
       brandedCuration: card?.innerText.toLocaleLowerCase().includes('crowflix free collection') || false,
-      originalPublisherNotice: card?.innerText.includes('original official publisher page') || false
+      originalPublisherNotice: card?.innerText.includes('original official publisher page') || false,
+      englishFirst: document.querySelector('.web-library')?.innerText.includes('English first') || false
     };
   })()`);
   await evaluate(`[...document.querySelectorAll('.topbar nav button')].find((button) => button.textContent.includes('Live TV'))?.click()`);
@@ -228,19 +243,20 @@ try {
   const playerStayedOpen = await evaluate("Boolean(document.querySelector('.player'))");
 
   const assertions = {
-    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && !home.desktopDownload,
-    fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy,
+    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.smallCursor && !home.desktopDownload,
+    fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy && live.preferredOrder,
     noBackgroundStreamProbing: backgroundStreamRequests.length === 0,
     detailsDialog: details.channelId && details.sources && details.providers,
     personalSourcesDialog: sourceDialog.playlist && sourceDialog.guide,
-    crowFlixFreeCollection: freeCollection.heading === 'CrowFlix Free Collection' && freeCollection.officialCategory && freeCollection.officialCard && freeCollection.brandedCuration && freeCollection.originalPublisherNotice,
+    guideAudience: guideAudience.englishFirst && guideAudience.australiaFirst && guideAudience.unitedStatesSecond,
+    crowFlixFreeCollection: freeCollection.heading === 'CrowFlix Free Collection' && freeCollection.officialCategory && freeCollection.preferredCategory && freeCollection.officialCard && freeCollection.brandedCuration && freeCollection.originalPublisherNotice && freeCollection.englishFirst,
     playerControls: player.customControls && player.nativeControlsRemoved && player.settingsButton && player.guideButton && player.subtitleButton && player.fullscreenButton,
     subtitleMenu: subtitleMenu.off && subtitleMenu.honestUnavailable,
     miniGuide: miniGuide.search && miniGuide.channels > 0 && miniGuide.previous && miniGuide.next,
     escapeClosesOverlayOnly: playerStayedOpen,
   };
   if (Object.values(assertions).some((value) => !value)) {
-    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, live, backgroundStreamRequests, details, sourceDialog, freeCollection, player, subtitleMenu, miniGuide })}`);
+    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, live, backgroundStreamRequests, details, sourceDialog, guideAudience, freeCollection, player, subtitleMenu, miniGuide })}`);
   }
   console.log(JSON.stringify({
     ok: true,

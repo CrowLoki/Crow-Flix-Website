@@ -54,10 +54,14 @@ export default function WebDestinationsView({
   onImport,
   onMessage,
 }: Props) {
-  const [category, setCategory] = useState(() => items.some((item) =>
-    item.categories?.includes("CrowFlix Free Collection"))
-    ? "CrowFlix Free Collection"
-    : "all");
+  const [category, setCategory] = useState(() => {
+    if (items.some((item) => item.categories?.includes("Australia & United States"))) {
+      return "Australia & United States";
+    }
+    return items.some((item) => item.categories?.includes("CrowFlix Free Collection"))
+      ? "CrowFlix Free Collection"
+      : "all";
+  });
   const [editing, setEditing] = useState<WebDestination | null>(null);
   const [adding, setAdding] = useState(false);
   const [visibleArtwork, setVisibleArtwork] = useState<Set<string>>(
@@ -110,9 +114,9 @@ export default function WebDestinationsView({
   return <div className="browse-page web-library">
     <div className="page-hero web-hero">
       <div>
-        <span className="overline"><GlobeHemisphereWest /> CrowFlix-curated free discovery</span>
+        <span className="overline"><GlobeHemisphereWest /> CrowFlix-curated free discovery · English first</span>
         <h1>CrowFlix Free Collection</h1>
-        <p>Discover official free publisher pages through CrowFlix. Every selection opens the original publisher only when you press Open; CrowFlix does not host, copy, or impersonate their videos.</p>
+        <p>Discover official free publisher pages through CrowFlix, with Australian and American English favourites leading the collection. Every selection opens the original publisher only when you press Open; CrowFlix does not host, copy, or impersonate their videos.</p>
       </div>
       <div className="web-hero-actions">
         <div className="catalog-number"><strong>{visible.length.toLocaleString()}</strong><span>website destinations</span></div>

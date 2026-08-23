@@ -90,6 +90,11 @@ import {
   summarizeAvailability,
   type ChannelAvailability,
 } from "./playback/availability";
+import {
+  isEnglishChannel,
+  preferredAudienceCountryOrder,
+  prioritizeEnglishAustraliaUnitedStates,
+} from "./audiencePreferences";
 import WebDestinationsView from "./WebDestinationsView";
 import {
   loadWebDestinations,
@@ -275,13 +280,7 @@ function countryName(code?: string | null) {
   catch { return canonical; }
 }
 
-function preferredCountry() {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (zone.startsWith("Australia/")) return "AU";
-  if (zone === "Pacific/Auckland") return "NZ";
-  try { return canonicalCountryCode(new Intl.Locale(navigator.language).region) || "AU"; }
-  catch { return "AU"; }
-}
+const DEFAULT_GUIDE_COUNTRY = "AU";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -425,7 +424,7 @@ export default function App() {
   const [network, setNetwork] = useState("all");
   const [feed, setFeed] = useState("all");
   const [provider, setProvider] = useState("all");
-  const [guideCountry, setGuideCountry] = useState(preferredCountry());
+  const [guideCountry, setGuideCountry] = useState(DEFAULT_GUIDE_COUNTRY);
   const [programmes, setProgrammes] = useState<Programme[]>([]);
   const [guideStatus, setGuideStatus] = useState("Preparing the live guide…");
   const [guideLoading, setGuideLoading] = useState(false);
@@ -853,12 +852,12 @@ export default function App() {
 
   const healthNow = clock.getTime();
   const rankedCatalogChannels = useMemo(
-    () => rankChannelsByAvailability(
+    () => prioritizeEnglishAustraliaUnitedStates(rankChannelsByAvailability(
       catalog.channels,
       playbackHealth,
       healthNow,
       sourcePreflights,
-    ),
+    )),
     [catalog.channels, healthNow, playbackHealth, sourcePreflights],
   );
   const availabilityByChannel = useMemo(
@@ -904,31 +903,42 @@ export default function App() {
       if (needle && !`${channel.name} ${(channel.altNames || []).join(" ")} ${(channel.owners || []).join(" ")} ${(channel.provenance || []).join(" ")} ${channel.network || ""} ${channel.categories.join(" ")} ${channel.languages.join(" ")} ${(channel.timezones || []).join(" ")} ${channel.broadcastArea.join(" ")} ${countryName(channel.country)}`.toLowerCase().includes(needle)) return false;
       return true;
     });
-    return rankChannelsByAvailability(
+    return prioritizeEnglishAustraliaUnitedStates(rankChannelsByAvailability(
       matching,
       playbackHealth,
       healthNow,
       sourcePreflights,
-    );
+    ));
   }, [catalog.channels, catalog.regions, category, city, country, feed, healthNow, language, network, owner, playbackHealth, provider, query, region, sourcePreflights, subdivision, timezone]);
 
   const favouriteChannels = useMemo(() => favourites.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, favourites]);
   const recentChannels = useMemo(() => recent.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, recent]);
-  const localChannels = useMemo(
-    () => rankedCatalogChannels.filter(
-      (channel) => channelMatchesCountry(
-        channel,
-        preferredCountry(),
-        catalog.regions,
-      ),
-    ),
-    [rankedCatalogChannels, catalog.regions],
+  const australianEnglishChannels = useMemo(
+    () => rankedCatalogChannels.filter((channel) =>
+      channelMatchesCountry(channel, "AU", catalog.regions)
+      && isEnglishChannel(channel)),
+    [catalog.regions, rankedCatalogChannels],
+  );
+  const americanEnglishChannels = useMemo(
+    () => rankedCatalogChannels.filter((channel) =>
+      channelMatchesCountry(channel, "US", catalog.regions)
+      && isEnglishChannel(channel)),
+    [catalog.regions, rankedCatalogChannels],
+  );
+  const englishChannels = useMemo(
+    () => rankedCatalogChannels.filter(isEnglishChannel),
+    [rankedCatalogChannels],
   );
   const sourceCount = useMemo(
     () => catalog.channels.reduce((total, channel) => total + channelSources(channel).length, 0),
     [catalog.channels],
   );
-  const hero = localChannels.find((channel) => currentProgramme(programmes, channel.id, clock)) || localChannels[0] || rankedCatalogChannels[0];
+  const heroCandidates = australianEnglishChannels.length
+    ? australianEnglishChannels
+    : americanEnglishChannels.length
+      ? americanEnglishChannels
+      : englishChannels;
+  const hero = heroCandidates.find((channel) => currentProgramme(programmes, channel.id, clock)) || heroCandidates[0] || rankedCatalogChannels[0];
   const heroNow = hero ? currentProgramme(programmes, hero.id, clock) : undefined;
   const heroNext = hero ? nextProgramme(programmes, hero.id, clock) : undefined;
 
@@ -1016,7 +1026,7 @@ export default function App() {
       {loading && <LoadingOverlay message={loadingMessage} />}
       {catalogError && <CatalogErrorBanner message={catalogError} hasCatalog={catalog.channels.length > 0} loading={loading} onRetry={() => void loadCatalog(catalog.channels.length > 0)} />}
       <main>
-        {view === "home" && <HomeView channels={rankedCatalogChannels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onGuide={() => setView("guide")} onInfo={setDetailsChannel} />}
+        {view === "home" && <HomeView channels={rankedCatalogChannels} australianEnglish={australianEnglishChannels} americanEnglish={americanEnglishChannels} english={englishChannels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onGuide={() => setView("guide")} onInfo={setDetailsChannel} />}
         {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} subdivision={subdivision} setSubdivision={setSubdivision} city={city} setCity={setCity} timezone={timezone} setTimezone={setTimezone} owner={owner} setOwner={setOwner} network={network} setNetwork={setNetwork} feed={feed} setFeed={setFeed} provider={provider} setProvider={setProvider} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} />}
         {view === "guide" && <GuideView catalog={catalog} country={guideCountry} setCountry={setGuideCountry} programmes={programmes} clock={clock} status={guideStatus} loading={guideLoading} requiresVerification={!isDesktop && guideNeedsVerification} verificationError={guideVerificationError} onVerified={(token) => void loadGuide(guideCountry, true, token)} onVerificationError={(message) => { setGuideVerificationError(message || null); if (message) setGuideStatus(message); }} onRefresh={() => void loadGuide(guideCountry, true)} onPlay={play} />}
         {view === "web" && <WebDestinationsView items={webDestinations} query={query} onOpen={(item) => void openWebsite(item.url, item.title)} onSave={saveWebDestination} onDelete={deleteWebDestination} onImport={importWebDestinations} onMessage={showToast} />}
@@ -1057,7 +1067,7 @@ function CatalogErrorBanner({ message, hasCatalog, loading, onRetry }: { message
   </section>;
 }
 
-function HomeView({ channels, programmes, clock, hero, heroNow, heroNext, recent, favourites, onPlay, onFavourite, onGuide, onInfo }: { channels: Channel[]; programmes: Programme[]; clock: Date; hero?: Channel; heroNow?: Programme; heroNext?: Programme; recent: Channel[]; favourites: string[]; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onGuide: () => void; onInfo: (channel: Channel) => void }) {
+function HomeView({ channels, australianEnglish, americanEnglish, english, programmes, clock, hero, heroNow, heroNext, recent, favourites, onPlay, onFavourite, onGuide, onInfo }: { channels: Channel[]; australianEnglish: Channel[]; americanEnglish: Channel[]; english: Channel[]; programmes: Programme[]; clock: Date; hero?: Channel; heroNow?: Programme; heroNext?: Programme; recent: Channel[]; favourites: string[]; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onGuide: () => void; onInfo: (channel: Channel) => void }) {
   const availabilityByChannel = useContext(PlaybackAvailabilityContext);
   const rail = (category: string) => channels.filter((channel) => channel.categories.includes(category)).slice(0, 24);
   if (!hero) {
@@ -1079,7 +1089,7 @@ function HomeView({ channels, programmes, clock, hero, heroNow, heroNext, recent
       <img className="hero-art" src={MASCOT_IMAGE} alt="CrowFlix cybernetic crow mascot" />
       <div className="hero-vignette" />
       <div className="hero-copy">
-        <span className="overline"><Broadcast weight="fill" /> {heroAvailability === "verified" ? "Verified live" : availabilityLabel(heroAvailability)}</span>
+        <span className="overline"><Broadcast weight="fill" /> Australia, United States & English first · {heroAvailability === "verified" ? "Verified live" : availabilityLabel(heroAvailability)}</span>
         <h1>{heroNow?.title || hero.name}</h1>
         <div className="hero-meta"><strong>{hero.name}</strong><span>{channelQuality(hero)}</span><span>{countryName(hero.country)}</span><span>{titleCase(hero.categories[0])}</span></div>
         <p>{heroNow?.description || `Watch ${hero.name} live from the worldwide CrowFlix channel catalogue.`}</p>
@@ -1089,6 +1099,9 @@ function HomeView({ channels, programmes, clock, hero, heroNow, heroNext, recent
     </section>
     <div className="home-content">
       {recent.length > 0 && <ChannelRail title="Continue watching" channels={recent} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />}
+      <ChannelRail title="Australia in English" channels={australianEnglish.slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="American TV & Movies" channels={americanEnglish.slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="English-language television" channels={english.slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
       <ChannelRail title="Live news" channels={rail("news")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
       <ChannelRail title="Movies on now" channels={rail("movies")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
       <ChannelRail title="Live sports" channels={rail("sports")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
@@ -1130,9 +1143,9 @@ type LiveViewProps = {
 };
 
 function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, subdivision, setSubdivision, city, setCity, timezone, setTimezone, owner, setOwner, network, setNetwork, feed, setFeed, provider, setProvider, favourites, programmes, clock, onPlay, onFavourite, onInfo }: LiveViewProps) {
-  const [catalogOrder, setCatalogOrder] = useState<"ranked" | "alphabetical">("ranked");
+  const [catalogOrder, setCatalogOrder] = useState<"preferred" | "alphabetical">("preferred");
   const [page, setPage] = useState(1);
-  const visibleChannels = useMemo(() => catalogOrder === "ranked"
+  const visibleChannels = useMemo(() => catalogOrder === "preferred"
     ? channels
     : [...channels].sort((left, right) => left.name.localeCompare(right.name)),
   [catalogOrder, channels]);
@@ -1217,9 +1230,9 @@ function LiveView({ catalog, channels, mode, setMode, category, setCategory, cou
     provider !== "all" ? provider : null,
   ].filter((label): label is string => Boolean(label));
   return <div className="browse-page">
-    <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television</span><h1>Browse Live TV</h1><p>The complete matching catalogue stays visible. Working routes rank first, while unverified, regional, part-time, and offline entries remain clearly labelled and reachable.</p></div><div className="catalog-number"><strong>{visibleChannels.length.toLocaleString()}</strong><span>catalogued · {matchingSources.toLocaleString()} sources</span></div></div>
+    <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television · Australia, United States & English first</span><h1>Browse Live TV</h1><p>The complete matching catalogue stays visible. Australian and American English channels lead by default; every country and language remains searchable, filterable, and reachable.</p></div><div className="catalog-number"><strong>{visibleChannels.length.toLocaleString()}</strong><span>catalogued · {matchingSources.toLocaleString()} sources</span></div></div>
     <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{browseModes.map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{activeFilterLabels.map((label, index) => <b key={`${label}-${index}`}>{label}</b>)}<button onClick={clearAll}>Clear all</button></div></aside>
-      <section className="browse-results"><div className="filter-strip"><button className={selected === "all" ? "active" : ""} onClick={() => select("all")}>All</button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => select(item.id)}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}</span></div><div className="availability-switch"><button className={catalogOrder === "ranked" ? "active" : ""} onClick={() => setCatalogOrder("ranked")}>Working first</button><button className={catalogOrder === "alphabetical" ? "active" : ""} onClick={() => setCatalogOrder("alphabetical")}>A–Z</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{pageChannels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>
+      <section className="browse-results"><div className="filter-strip"><button className={selected === "all" ? "active" : ""} onClick={() => select("all")}>All</button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => select(item.id)}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}</span></div><div className="availability-switch"><button className={catalogOrder === "preferred" ? "active" : ""} onClick={() => setCatalogOrder("preferred")}>Australia / US / English first</button><button className={catalogOrder === "alphabetical" ? "active" : ""} onClick={() => setCatalogOrder("alphabetical")}>A–Z</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{pageChannels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>
   </div>;
 }
 
@@ -1234,11 +1247,16 @@ function GuideView({ catalog, country, setCountry, programmes, clock, status, lo
     (channel) => channelMatchesCountry(channel, country, catalog.regions),
   );
   const byChannel = useMemo(() => { const map = new Map<string, Programme[]>(); programmes.forEach((item) => map.set(item.channelId, [...(map.get(item.channelId) || []), item])); return map; }, [programmes]);
-  const sortedChannels = [...countryChannels].sort((a, b) =>
+  const sortedChannels = prioritizeEnglishAustraliaUnitedStates([...countryChannels].sort((a, b) =>
     Number(byChannel.has(b.id)) - Number(byChannel.has(a.id))
     || availabilityRank(availabilityByChannel[a.key] || "unverified")
       - availabilityRank(availabilityByChannel[b.key] || "unverified")
-    || a.name.localeCompare(b.name));
+    || a.name.localeCompare(b.name)));
+  const guideCountries = useMemo(
+    () => [...catalog.countries].sort((left, right) =>
+      preferredAudienceCountryOrder(left.code, right.code)),
+    [catalog.countries],
+  );
   const guidePage = paginateGuideChannels(sortedChannels, page);
   const guidePageCount = guidePage.pageCount;
   const safePage = guidePage.page;
@@ -1248,7 +1266,7 @@ function GuideView({ catalog, country, setCountry, programmes, clock, status, lo
   const start = new Date(clock); start.setMinutes(Math.floor(start.getMinutes() / 30) * 30, 0, 0);
   const end = new Date(start.getTime() + 4 * 60 * 60 * 1000);
   const times = Array.from({ length: 9 }, (_, index) => new Date(start.getTime() + index * 30 * 60 * 1000));
-  return <div className="guide-page"><div className="page-hero guide-title"><div><span className="overline"><CalendarDots /> Live programme guide</span><h1>What’s on now</h1><p>{clock.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</p></div><div className="guide-controls"><label><span>Guide region</span><select value={canonicalCountryCode(country)} onChange={(event) => setCountry(canonicalCountryCode(event.target.value))}>{catalog.countries.map((item) => <option key={item.code} value={canonicalCountryCode(item.code)}>{item.flag} {item.name} ({item.count.toLocaleString()})</option>)}</select></label><button onClick={onRefresh} disabled={loading}><ArrowsClockwise className={loading ? "spin" : ""} /> Refresh</button></div></div>{requiresVerification && <TurnstileGuideGate error={verificationError} onVerified={onVerified} onError={onVerificationError} />}<div className="guide-status"><span className="signal-dot" /><strong>{loading ? "Updating live programme data…" : status}</strong><span>{listedCountryChannels.toLocaleString()} with listings · {countryChannels.length.toLocaleString()} channels total</span></div><div className="guide-shell"><div className="guide-times"><div>Channel</div>{times.map((time) => <span key={time.toISOString()}>{formatTime(time)}</span>)}</div><div className="guide-now-line" style={{ left: `calc(260px + ${((clock.getTime() - start.getTime()) / (end.getTime() - start.getTime())) * 100}% * (1 - 260px / 100%))` }}><b>NOW</b></div>{channels.map((channel) => { const items = (byChannel.get(channel.id) || []).filter((item) => new Date(item.stop) > start && new Date(item.start) < end); return <div className="guide-row" key={channel.key}><button className="guide-channel" onClick={() => onPlay(channel)}>{channel.logo ? <img src={channel.logo} alt="" /> : <img src={BRAND_ICON} alt="" />}<span><strong>{channel.name}</strong><small>{titleCase(channel.categories[0])}</small></span></button><div className="programme-track">{items.length ? items.map((item) => { const itemStart = Math.max(start.getTime(), new Date(item.start).getTime()); const itemEnd = Math.min(end.getTime(), new Date(item.stop).getTime()); const left = ((itemStart - start.getTime()) / (end.getTime() - start.getTime())) * 100; const width = ((itemEnd - itemStart) / (end.getTime() - start.getTime())) * 100; const live = new Date(item.start) <= clock && new Date(item.stop) > clock; return <button key={`${item.channelId}-${item.start}`} className={live ? "live" : ""} style={{ left: `${left}%`, width: `${width}%` }} onClick={() => onPlay(channel)}><strong>{item.title}</strong><small>{formatTime(new Date(item.start))}–{formatTime(new Date(item.stop))}</small></button>; }) : <button className="no-listing" onClick={() => onPlay(channel)}><strong>Live broadcast</strong><small>Programme details unavailable</small></button>}</div></div>; })}</div>{guidePage.total > GUIDE_PAGE_SIZE && <div className="guide-pagination"><span>Showing {guidePage.start}–{guidePage.end} of {guidePage.total.toLocaleString()} channels</span><Pagination page={safePage} pageCount={guidePageCount} onPage={setPage} /></div>}{!loading && !programmes.length && !requiresVerification && <EmptyState title="No programme listings matched" copy="The channels remain available to watch live while CrowFlix refreshes guide sources." />}</div>;
+  return <div className="guide-page"><div className="page-hero guide-title"><div><span className="overline"><CalendarDots /> Live programme guide · English first</span><h1>What’s on now</h1><p>{clock.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · Australia is the default; United States is pinned next.</p></div><div className="guide-controls"><label><span>Guide country · English first</span><select value={canonicalCountryCode(country)} onChange={(event) => setCountry(canonicalCountryCode(event.target.value))}>{guideCountries.map((item) => <option key={item.code} value={canonicalCountryCode(item.code)}>{item.flag} {item.name} ({item.count.toLocaleString()})</option>)}</select></label><button onClick={onRefresh} disabled={loading}><ArrowsClockwise className={loading ? "spin" : ""} /> Refresh</button></div></div>{requiresVerification && <TurnstileGuideGate error={verificationError} onVerified={onVerified} onError={onVerificationError} />}<div className="guide-status"><span className="signal-dot" /><strong>{loading ? "Updating live programme data…" : status}</strong><span>{listedCountryChannels.toLocaleString()} with listings · {countryChannels.length.toLocaleString()} channels total</span></div><div className="guide-shell"><div className="guide-times"><div>Channel</div>{times.map((time) => <span key={time.toISOString()}>{formatTime(time)}</span>)}</div><div className="guide-now-line" style={{ left: `calc(260px + ${((clock.getTime() - start.getTime()) / (end.getTime() - start.getTime())) * 100}% * (1 - 260px / 100%))` }}><b>NOW</b></div>{channels.map((channel) => { const items = (byChannel.get(channel.id) || []).filter((item) => new Date(item.stop) > start && new Date(item.start) < end); return <div className="guide-row" key={channel.key}><button className="guide-channel" onClick={() => onPlay(channel)}>{channel.logo ? <img src={channel.logo} alt="" /> : <img src={BRAND_ICON} alt="" />}<span><strong>{channel.name}</strong><small>{titleCase(channel.categories[0])}</small></span></button><div className="programme-track">{items.length ? items.map((item) => { const itemStart = Math.max(start.getTime(), new Date(item.start).getTime()); const itemEnd = Math.min(end.getTime(), new Date(item.stop).getTime()); const left = ((itemStart - start.getTime()) / (end.getTime() - start.getTime())) * 100; const width = ((itemEnd - itemStart) / (end.getTime() - start.getTime())) * 100; const live = new Date(item.start) <= clock && new Date(item.stop) > clock; return <button key={`${item.channelId}-${item.start}`} className={live ? "live" : ""} style={{ left: `${left}%`, width: `${width}%` }} onClick={() => onPlay(channel)}><strong>{item.title}</strong><small>{formatTime(new Date(item.start))}–{formatTime(new Date(item.stop))}</small></button>; }) : <button className="no-listing" onClick={() => onPlay(channel)}><strong>Live broadcast</strong><small>Programme details unavailable</small></button>}</div></div>; })}</div>{guidePage.total > GUIDE_PAGE_SIZE && <div className="guide-pagination"><span>Showing {guidePage.start}–{guidePage.end} of {guidePage.total.toLocaleString()}</span><Pagination page={safePage} pageCount={guidePageCount} onPage={setPage} /></div>}{!loading && !programmes.length && !requiresVerification && <EmptyState title="No programme listings matched" copy="The channels remain available to watch live while CrowFlix refreshes guide sources." />}</div>;
 }
 
 function FavouritesView({ channels, favourites, programmes, clock, onPlay, onFavourite, onInfo, onBrowse }: { channels: Channel[]; favourites: string[]; programmes: Programme[]; clock: Date; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onInfo: (channel: Channel) => void; onBrowse: () => void }) {
