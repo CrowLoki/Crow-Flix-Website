@@ -94,11 +94,15 @@ Built-in guide retrieval is automatic and protected by Turnstile only at `/epg`:
 4. XMLTV `<channel>` blocks can teach an alias only when a normalized provider
    display name uniquely matches one requested channel. Ambiguous names are
    rejected rather than guessed.
-5. Australian timezones use the fixed city-source and alias table from the
-   restored EPG configuration before the broad EPGShare fallback.
-6. Provider file tags such as `US2`, `CA2` and `BE2` are tracked explicitly.
-7. Gzip XMLTV is parsed as a bounded stream; only requested programmes are
-   retained in memory.
+5. Complementary IPTV-org sources are merged. Once a layer succeeds, equivalent
+   mirrors whose mapped channel set is already covered are skipped.
+6. Australian timezones fill still-unmatched channels from the fixed city-source
+   and alias table before the broad EPGShare layer fills the remaining country
+   channels.
+7. Provider file tags such as `US2`, `CA2` and `BE2` are tracked explicitly.
+8. Gzip XMLTV is parsed as a bounded stream; only requested programmes are
+   retained in memory. The combined result is deduplicated by channel/start/stop
+   and bounded to 50,000 programmes.
 
 Optional personal XMLTV files are streamed through the same bounded matching
 parser locally. Public personal XMLTV URLs use the bounded SSRF-guarded relay;

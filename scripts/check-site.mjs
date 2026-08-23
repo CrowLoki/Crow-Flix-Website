@@ -121,7 +121,7 @@ for (const value of ["fetchValidatedWithUrl", 'upstreamHeaders.set("Range"', '"c
 }
 
 const relayEpg = await readFile(path.join(repositoryRoot, "relay", "src", "epg.ts"), "utf8");
-for (const value of ["streamGuidesJson", "32 * 1024 * 1024", "australianGuideSource", "epgSharePrimaryTag", "Australia/Brisbane", "96 * 1024 * 1024", "i.mjh.nz/au/"]) {
+for (const value of ["streamGuidesJson", "32 * 1024 * 1024", "australianGuideSource", "epgSharePrimaryTag", "Australia/Brisbane", "96 * 1024 * 1024", "MAX_COMBINED_PROGRAMMES", "remainingIds", "sourceLabels", "i.mjh.nz/au/"]) {
   assert(relayEpg.includes(value), `Relay guide integration is missing: ${value}`);
 }
 

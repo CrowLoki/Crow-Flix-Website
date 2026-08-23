@@ -18,7 +18,7 @@ describe("worker routing", () => {
     expect(await response.json()).toEqual({
       ok: true,
       service: "crowflix-relay",
-      version: "0.1.0",
+      version: "0.2.0",
     });
   });
 

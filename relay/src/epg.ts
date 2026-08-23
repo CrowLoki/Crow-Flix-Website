@@ -10,11 +10,13 @@ export const GUIDES_MAX_BYTES = 32 * 1024 * 1024;
 export const XMLTV_MAX_DECOMPRESSED_BYTES = 96 * 1024 * 1024;
 /** How many ranked guide sources to try before falling back. */
 export const MAX_EPG_SOURCES = 3;
+/** Total programme cap after combining complementary guide layers. */
+export const MAX_COMBINED_PROGRAMMES = 50_000;
 export const MAX_CHANNEL_IDS = 2_000;
 export const MAX_CHANNEL_ID_LENGTH = 200;
 export const UPSTREAM_TIMEOUT_MS = 25_000;
 
-const RELAY_UA = "crowflix-relay/0.1.0";
+const RELAY_UA = "crowflix-relay/0.2.0";
 const MAX_GUIDE_OBJECT_CHARS = 128 * 1024;
 const MAX_MATCHED_GUIDE_ENTRIES = 50_000;
 
@@ -205,6 +207,17 @@ export function rankGuideSources(
   guides: GuideEntry[],
   wantedIds: Iterable<string>,
 ): string[] {
+  const coverage = guideSourceCoverage(guides, wantedIds);
+  return [...coverage.entries()]
+    .map(([url, channels]) => ({ url, count: channels.size }))
+    .sort((a, b) => b.count - a.count)
+    .map((entry) => entry.url);
+}
+
+function guideSourceCoverage(
+  guides: GuideEntry[],
+  wantedIds: Iterable<string>,
+): Map<string, Set<string>> {
   const wanted = new Set(wantedIds);
   const coverage = new Map<string, Set<string>>();
   for (const guide of guides) {
@@ -219,10 +232,7 @@ export function rankGuideSources(
       set.add(channel);
     }
   }
-  return [...coverage.entries()]
-    .map(([url, channels]) => ({ url, count: channels.size }))
-    .sort((a, b) => b.count - a.count)
-    .map((entry) => entry.url);
+  return coverage;
 }
 
 export function normalizeChannelIds(raw: string[]): string[] {
@@ -507,23 +517,48 @@ export async function loadAutoEpg(
   const ids = normalizeChannelIds(channelIds);
   const code = normalizeCountryCode(country);
   let resolvedNames = copyGuideNames(namesByChannel);
+  const combined = new Map<string, RelayProgramme>();
+  const matched = new Set<string>();
+  const sourceLabels: string[] = [];
+  const remainingIds = () => ids.filter((id) => !matched.has(id));
+  const addLayer = (programmes: RelayProgramme[], label: string): boolean => {
+    let added = false;
+    for (const programme of programmes) {
+      const identity = `${programme.channelId}\u0000${programme.start}\u0000${programme.stop}`;
+      if (combined.has(identity)) {
+        matched.add(programme.channelId);
+        continue;
+      }
+      if (combined.size >= MAX_COMBINED_PROGRAMMES) break;
+      combined.set(identity, programme);
+      matched.add(programme.channelId);
+      added = true;
+    }
+    if (added && !sourceLabels.includes(label)) sourceLabels.push(label);
+    return added;
+  };
 
   try {
     const guides = await fetchGuides(fetcher, ids);
     resolvedNames = enrichGuideNames(resolvedNames, guides, ids);
     const ranked = rankGuideSources(guides, ids);
-    for (const source of ranked.slice(0, MAX_EPG_SOURCES)) {
+    const coverage = guideSourceCoverage(guides, ids);
+    let attempts = 0;
+    for (const source of ranked) {
+      if (combined.size >= MAX_COMBINED_PROGRAMMES) break;
+      const expected = coverage.get(source);
+      if (expected && [...expected].every((id) => matched.has(id))) continue;
+      if (attempts >= MAX_EPG_SOURCES) break;
+      attempts += 1;
       try {
         const programmes = await fetchSourceProgrammes(
           source,
-          ids,
+          remainingIds(),
           fetcher,
           new Map(),
           resolvedNames,
         );
-        if (programmes.length > 0) {
-          return guideResult(programmes, `IPTV-org EPG · ${source}`);
-        }
+        addLayer(programmes, `IPTV-org EPG · ${source}`);
       } catch {
         // Try the next ranked source.
       }
@@ -532,27 +567,29 @@ export async function loadAutoEpg(
     // guides.json unavailable — fall through to the regional ripper.
   }
 
-  if (code === "AU") {
-    const regional = australianGuideSource(ids, timeZone);
+  if (code === "AU" && combined.size < MAX_COMBINED_PROGRAMMES) {
+    const regional = australianGuideSource(remainingIds(), timeZone);
     if (regional) {
       try {
         const programmes = await fetchSourceProgrammes(
           regional.url,
-          ids,
+          remainingIds(),
           fetcher,
           regional.aliases,
           resolvedNames,
         );
-        if (programmes.length > 0) {
-          return guideResult(programmes, `Australian ${regional.city} guide`);
-        }
+        addLayer(programmes, `Australian ${regional.city} guide`);
       } catch {
         // Fall through to the broad EPGShare file.
       }
     }
   }
 
-  if (code.length > 0) {
+  if (
+    code.length > 0
+    && combined.size < MAX_COMBINED_PROGRAMMES
+    && remainingIds().length > 0
+  ) {
     const filename = `epg_ripper_${epgSharePrimaryTag(code)}.xml.gz`;
     for (const source of [
       `https://epgshare01.online/epgshare01/${filename}`,
@@ -561,18 +598,23 @@ export async function loadAutoEpg(
       try {
         const programmes = await fetchSourceProgrammes(
           source,
-          ids,
+          remainingIds(),
           fetcher,
           new Map(),
           resolvedNames,
         );
-        if (programmes.length > 0) {
-          return guideResult(programmes, `Automatic regional guide · ${code}`);
-        }
+        if (addLayer(programmes, `Automatic regional guide · ${code}`)) break;
       } catch {
         // Try the next ripper mirror.
       }
     }
+  }
+
+  if (combined.size > 0) {
+    const programmes = [...combined.values()].sort((left, right) =>
+      left.start.localeCompare(right.start)
+      || left.channelId.localeCompare(right.channelId));
+    return guideResult(programmes, sourceLabels.join(" + "));
   }
 
   throw new RelayError(

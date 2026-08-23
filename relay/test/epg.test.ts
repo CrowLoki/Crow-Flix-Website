@@ -67,6 +67,7 @@ const RIPPER_AU_1 = "https://epgshare01.online/epgshare01/epg_ripper_AU1.xml.gz"
 const RIPPER_AU_2 =
   "https://raw.githubusercontent.com/epgshare01/share01/master/epg_ripper_AU1.xml.gz";
 const RIPPER_UK_1 = "https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz";
+const RIPPER_US_1 = "https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz";
 const BRISBANE_GUIDE = "https://i.mjh.nz/au/Brisbane/epg.xml.gz";
 
 describe("parseGuidesJson", () => {
@@ -285,6 +286,60 @@ describe("loadAutoEpg", () => {
     });
     const result = await loadAutoEpg("AU", ["ABC1.au"], fetcher);
     expect(result.source).toBe("IPTV-org EPG · https://guides.example/weak.xml");
+  });
+
+  it("combines complementary IPTV-org sources instead of stopping at the first partial match", async () => {
+    const guides = JSON.stringify([
+      { channel: "A.test", sources: [{ url: "https://guides.example/first.xml" }] },
+      { channel: "B.test", sources: [{ url: "https://guides.example/first.xml" }] },
+      { channel: "C.test", sources: [{ url: "https://guides.example/second.xml" }] },
+    ]);
+    const first = `<tv><programme start="20260816120000 +0000" stop="20260816130000 +0000" channel="A.test"><title>Programme A</title></programme></tv>`;
+    const second = `<tv><programme start="20260816120000 +0000" stop="20260816130000 +0000" channel="C.test"><title>Programme C</title></programme></tv>`;
+    const { calls, fetcher } = makeFetcher({
+      [GUIDES_URL]: () => new Response(guides, { status: 200 }),
+      "https://guides.example/first.xml": () => new Response(first, { status: 200 }),
+      "https://guides.example/second.xml": () => new Response(second, { status: 200 }),
+    });
+
+    const result = await loadAutoEpg("", ["A.test", "B.test", "C.test"], fetcher);
+
+    expect(result.matchedChannels).toBe(2);
+    expect(result.programmes.map((programme) => programme.channelId))
+      .toEqual(["A.test", "C.test"]);
+    expect(result.source).toBe(
+      "IPTV-org EPG · https://guides.example/first.xml + "
+      + "IPTV-org EPG · https://guides.example/second.xml",
+    );
+    expect(calls).toEqual([
+      GUIDES_URL,
+      "https://guides.example/first.xml",
+      "https://guides.example/second.xml",
+    ]);
+  });
+
+  it("fills channels missing from a small worldwide guide with the country guide", async () => {
+    const guides = JSON.stringify([{
+      channel: "Global.qa",
+      sources: [{ url: "https://guides.example/global.xml" }],
+    }]);
+    const global = `<tv><programme start="20260816120000 +0000" stop="20260816130000 +0000" channel="Global.qa"><title>World News</title></programme></tv>`;
+    const regional = `<tv><programme start="20260816130000 +0000" stop="20260816140000 +0000" channel="Local.us"><title>Local News</title></programme></tv>`;
+    const { calls, fetcher } = makeFetcher({
+      [GUIDES_URL]: () => new Response(guides, { status: 200 }),
+      "https://guides.example/global.xml": () => new Response(global, { status: 200 }),
+      [RIPPER_US_1]: () => new Response(regional, { status: 200 }),
+    });
+
+    const result = await loadAutoEpg("US", ["Global.qa", "Local.us"], fetcher);
+
+    expect(result.matchedChannels).toBe(2);
+    expect(result.programmes.map((programme) => programme.channelId))
+      .toEqual(["Global.qa", "Local.us"]);
+    expect(result.source).toBe(
+      "IPTV-org EPG · https://guides.example/global.xml + Automatic regional guide · US",
+    );
+    expect(calls).toEqual([GUIDES_URL, "https://guides.example/global.xml", RIPPER_US_1]);
   });
 
   it("loads and remaps the timezone-specific Australian guide before the broad ripper", async () => {
