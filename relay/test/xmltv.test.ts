@@ -4,6 +4,7 @@ import { streamXmltvBody } from "../src/epg";
 import {
   channelAliases,
   decodeXmlEntities,
+  normalizeXmltvChannelName,
   parseXmltvTime,
   stripXmlMarkup,
   XmltvStreamParser,
@@ -104,6 +105,13 @@ describe("channelAliases", () => {
   });
 });
 
+describe("normalizeXmltvChannelName", () => {
+  it("normalizes provider punctuation, accents, and trailing delivery labels", () => {
+    expect(normalizeXmltvChannelName("Dé Película Clásico HD (Canada)"))
+      .toBe("de pelicula clasico");
+  });
+});
+
 describe("XmltvStreamParser", () => {
   it("keeps only requested channels and normalises fields", () => {
     const parser = new XmltvStreamParser(["ABC1.au"]);
@@ -143,6 +151,44 @@ describe("XmltvStreamParser", () => {
     const programmes = parser.end();
     expect(programmes).toHaveLength(2);
     expect(programmes.every((p) => p.channelId === "ABC1.au@HD")).toBe(true);
+  });
+
+  it("learns an exact unique provider alias from XMLTV display names", () => {
+    const xml = `<tv>
+      <channel id="Citytv.Toronto.HD.ca2"><display-name>Citytv Toronto HD</display-name></channel>
+      <programme start="20260816120000 +0000" stop="20260816130000 +0000" channel="Citytv.Toronto.HD.ca2"><title>Toronto News</title></programme>
+    </tv>`;
+    const parser = new XmltvStreamParser(
+      ["CitytvToronto.ca"],
+      {},
+      new Map([["CitytvToronto.ca", ["Citytv Toronto"]]]),
+    );
+
+    for (let index = 0; index < xml.length; index += 11) {
+      parser.push(xml.slice(index, index + 11));
+    }
+
+    expect(parser.end()).toEqual([expect.objectContaining({
+      channelId: "CitytvToronto.ca",
+      title: "Toronto News",
+    })]);
+  });
+
+  it("does not guess when a normalized display name is ambiguous", () => {
+    const xml = `<tv>
+      <channel id="Shared.us2"><display-name>Shared Channel HD</display-name></channel>
+      <programme start="20260816120000 +0000" stop="20260816130000 +0000" channel="Shared.us2"><title>Ambiguous</title></programme>
+    </tv>`;
+    const parser = new XmltvStreamParser(
+      ["SharedEast.us", "SharedWest.us"],
+      {},
+      new Map([
+        ["SharedEast.us", ["Shared Channel"]],
+        ["SharedWest.us", ["Shared Channel"]],
+      ]),
+    );
+    parser.push(xml);
+    expect(parser.end()).toEqual([]);
   });
 
   it("handles chunks split inside a tag", () => {

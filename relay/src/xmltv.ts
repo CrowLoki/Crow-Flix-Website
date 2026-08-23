@@ -171,16 +171,56 @@ function elementText(
   return text;
 }
 
+function elementTexts(body: string, tag: string, maxBytes: number): string[] {
+  const pattern = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, "gi");
+  const values: string[] = [];
+  for (const match of body.matchAll(pattern)) {
+    const text = stripXmlMarkup(decodeXmlEntities(match[1] || "")).trim();
+    if (text && utf8Length(text) <= maxBytes) values.push(text);
+  }
+  return values;
+}
+
+export function normalizeXmltvChannelName(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/(?:\s+(?:sd|hd|fhd|uhd|4k|east|eastern|west|western|feed|canada|usa|us))+$/g, "")
+    .replace(/\s+/g, " ");
+}
+
 export class XmltvStreamParser {
   private readonly aliases: Map<string, string>;
+  private readonly channelNames = new Map<string, string>();
   private readonly limits: XmltvLimits;
   private buffer = "";
   private readonly programmes: RelayProgramme[] = [];
   private truncatedFlag = false;
 
-  constructor(channelIds: Iterable<string>, limits: Partial<XmltvLimits> = {}) {
+  constructor(
+    channelIds: Iterable<string>,
+    limits: Partial<XmltvLimits> = {},
+    namesByChannel: ReadonlyMap<string, readonly string[]> = new Map(),
+  ) {
     this.aliases = channelAliases(channelIds);
     this.limits = { ...DEFAULT_XMLTV_LIMITS, ...limits };
+    const candidates = new Map<string, Set<string>>();
+    for (const [channelId, names] of namesByChannel) {
+      for (const name of names) {
+        const normalized = normalizeXmltvChannelName(name);
+        if (!normalized) continue;
+        const ids = candidates.get(normalized) || new Set<string>();
+        ids.add(channelId);
+        candidates.set(normalized, ids);
+      }
+    }
+    for (const [name, ids] of candidates) {
+      if (ids.size === 1) this.channelNames.set(name, [...ids][0]!);
+    }
   }
 
   get kept(): number {
@@ -209,20 +249,26 @@ export class XmltvStreamParser {
 
   private scan(): void {
     for (;;) {
-      const open = this.buffer.indexOf("<programme");
+      const programmeOpen = this.buffer.indexOf("<programme");
+      const channelOpen = this.buffer.indexOf("<channel");
+      const isChannel = channelOpen !== -1
+        && (programmeOpen === -1 || channelOpen < programmeOpen);
+      const open = isChannel ? channelOpen : programmeOpen;
       if (open === -1) {
-        // Keep a short tail in case "<programme" is split across chunks.
+        // Keep a short tail in case an opening tag is split across chunks.
         this.buffer = this.buffer.slice(-16);
         return;
       }
-      const close = this.buffer.indexOf("</programme>", open);
+      const closingTag = isChannel ? "</channel>" : "</programme>";
+      const close = this.buffer.indexOf(closingTag, open);
       if (close === -1) {
         if (open > 0) this.buffer = this.buffer.slice(open);
         return; // wait for more data
       }
       const block = this.buffer.slice(open, close);
-      this.buffer = this.buffer.slice(close + "</programme>".length);
-      this.handleBlock(block);
+      this.buffer = this.buffer.slice(close + closingTag.length);
+      if (isChannel) this.handleChannelBlock(block);
+      else this.handleProgrammeBlock(block);
       if (this.programmes.length >= this.limits.maxProgrammes) {
         this.truncatedFlag = true;
         this.buffer = "";
@@ -231,7 +277,23 @@ export class XmltvStreamParser {
     }
   }
 
-  private handleBlock(block: string): void {
+  private handleChannelBlock(block: string): void {
+    if (!this.channelNames.size) return;
+    const tagEnd = block.indexOf(">");
+    if (tagEnd === -1) return;
+    const providerId = attrValue(block.slice(0, tagEnd + 1), "id");
+    if (!providerId || this.aliases.has(providerId)) return;
+    const body = block.slice(tagEnd + 1);
+    for (const displayName of elementTexts(body, "display-name", this.limits.maxTitleBytes)) {
+      const channelId = this.channelNames.get(normalizeXmltvChannelName(displayName));
+      if (!channelId) continue;
+      this.aliases.set(providerId, channelId);
+      this.aliases.set(providerId.toLowerCase(), channelId);
+      return;
+    }
+  }
+
+  private handleProgrammeBlock(block: string): void {
     const tagEnd = block.indexOf(">");
     if (tagEnd === -1) return;
     const openingTag = block.slice(0, tagEnd + 1);

@@ -34,6 +34,7 @@ for (const file of [
   "src/App.tsx",
   "src/App.css",
   "src/webCatalog.ts",
+  "src/additivePlaylists.ts",
   "src/streamHealthIndex.ts",
   "src/relayClient.ts",
   "src/TurnstileGuideGate.tsx",
@@ -41,6 +42,7 @@ for (const file of [
   "relay/src/index.ts",
   "relay/src/turnstile.ts",
   "RECOVERY-PROVENANCE.json",
+  "docs/IPTV-ECOSYSTEM.md",
   "dist/index.html",
   "dist/_headers",
   "dist/_redirects",
@@ -84,7 +86,7 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Best available", "All catalogued"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 
@@ -99,6 +101,8 @@ for (const value of ['import("hls.js")', 'import("dashjs")', "reorderRemainingSo
 }
 assert(!/^import Hls from "hls\.js";/m.test(playbackController), "HLS.js is still bundled into initial page startup");
 assert(!app.includes("Download Crow-Flix for Windows"), "The browser app was replaced by a desktop download page");
+assert(!app.includes("showAllCatalogued"), "Live TV still defaults to hiding catalogue entries");
+assert(!app.includes("limited/offline hidden"), "Live TV still reports silently hidden channels");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/PRIVACY.md"), "The About page does not link to the website privacy notice");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/SECURITY.md"), "The About page does not link to the website security policy");
 assert(!app.includes("A cinematic desktop IPTV player"), "The About page still identifies the website as the desktop app");
@@ -106,7 +110,7 @@ assert(!app.includes("A cinematic desktop IPTV player"), "The About page still i
 const relayClient = await readFile(path.join(repositoryRoot, "src", "relayClient.ts"), "utf8");
 assert(relayClient.includes(relayOrigin), "The browser app is not wired to the CrowFlix relay");
 assert(relayClient.includes("X-Turnstile-Token"), "Guide requests do not send the Turnstile token in a header");
-for (const value of ["toWebPlayableSources", "https-upgrade", "routeDashRequestUrl", 'delivery: "relay"']) {
+for (const value of ["toWebPlayableSources", "https-upgrade", "routeDashRequestUrl", 'delivery: "relay"', 'method: "POST"', "timeZone", "channels"]) {
   assert(relayClient.includes(value), `Browser playback routing is missing: ${value}`);
 }
 
@@ -115,9 +119,19 @@ for (const value of ["fetchValidatedWithUrl", 'upstreamHeaders.set("Range"', '"c
   assert(relayIndex.includes(value), `Relay playback transport is missing: ${value}`);
 }
 
+const relayEpg = await readFile(path.join(repositoryRoot, "relay", "src", "epg.ts"), "utf8");
+for (const value of ["streamGuidesJson", "32 * 1024 * 1024", "australianGuideSource", "epgSharePrimaryTag", "Australia/Brisbane", "96 * 1024 * 1024", "i.mjh.nz/au/"]) {
+  assert(relayEpg.includes(value), `Relay guide integration is missing: ${value}`);
+}
+
 const webCatalog = await readFile(path.join(repositoryRoot, "src", "webCatalog.ts"), "utf8");
-for (const value of ["OPTIONAL_FAST_PLAYLISTS", "overlayAmagiFastFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "recent source health", "current FAST fallbacks", "crowflix-catalog-v2"]) {
+for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "overlayAmagiFastFallbacks", "overlayVerifiedPublicFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "loadAdditivePlaylists", "overlayAdditivePlaylists", "regional/provider playlists", "verified public fallbacks", "recent source health", "current FAST fallbacks", "crowflix-catalog-v3", 'fetchJson<ApiSubdivision[]>("subdivisions")', 'fetchJson<ApiCity[]>("cities")', 'fetchJson<ApiTimezone[]>("timezones")']) {
   assert(webCatalog.includes(value), `Catalogue fallback repair is missing: ${value}`);
+}
+
+const additivePlaylists = await readFile(path.join(repositoryRoot, "src", "additivePlaylists.ts"), "utf8");
+for (const value of ["raw-tv.m3u8", "MAX_ADDITIVE_PLAYLIST_BYTES", "MAX_ADDITIVE_PLAYLIST_ENTRIES", "Australia/Brisbane", "mjh-nz", "mjh-world"]) {
+  assert(additivePlaylists.includes(value), `Additive playlist integration is missing: ${value}`);
 }
 
 const streamHealth = await readFile(path.join(repositoryRoot, "src", "streamHealthIndex.ts"), "utf8");
@@ -181,6 +195,11 @@ assert(!headers.includes("unsafe-eval"), "_headers permits unsafe-eval");
 const privacy = await readFile(path.join(repositoryRoot, "PRIVACY.md"), "utf8");
 for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "IPTV Nexus", "does not attach search text", "clear site data for `crowflix.tv`"]) {
   assert(privacy.includes(value), `PRIVACY.md is missing: ${value}`);
+}
+
+const ecosystem = await readFile(path.join(repositoryRoot, "docs", "IPTV-ECOSYSTEM.md"), "utf8");
+for (const value of ["iptv-org/iptv", "iptv-org/api", "iptv-org/database", "iptv-org/epg", "iptv-org/awesome-iptv", "subdivisions", "cities", "timezones", "Live TV always contains the complete matching result set"]) {
+  assert(ecosystem.includes(value), `IPTV ecosystem contract is missing: ${value}`);
 }
 
 const robots = await readFile(path.join(distRoot, "robots.txt"), "utf8");

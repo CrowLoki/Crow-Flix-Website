@@ -30,3 +30,13 @@ Live guide retrieval is protected by Cloudflare Turnstile with server-side
 Siteverify validation. Report any apparent token replay, hostname/action
 validation bypass, leaked widget secret, or way to invoke protected guide work
 without successful verification through the private advisory form.
+
+Australian regional guide URLs and channel aliases are selected only from a
+fixed timezone table; the browser timezone cannot become an arbitrary upstream
+URL. Regional and broad fallback XMLTV bodies are decompressed and parsed as
+bounded streams, retaining only requested-channel programmes.
+
+Additive playlist URLs are selected from a fixed configuration, fetched through
+the SSRF-guarded relay, capped before parsing, and accepted only as HTTP(S)
+media entries. Exact URL/header identities are deduplicated and every retained
+source records its public playlist provenance.

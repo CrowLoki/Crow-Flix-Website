@@ -29,13 +29,16 @@ describe("worker routing", () => {
     expect(response.headers.get("Access-Control-Allow-Methods")).toContain(
       "GET",
     );
+    expect(response.headers.get("Access-Control-Allow-Methods")).toContain(
+      "POST",
+    );
   });
 
   it("rejects non-GET methods with 405 JSON", async () => {
     const response = await call("/health", "POST");
     expect(response.status).toBe(405);
     expect(await response.json()).toEqual({
-      error: "Only GET requests are supported.",
+      error: "That method is not supported for this route.",
     });
   });
 
@@ -134,6 +137,58 @@ describe("worker input validation (no network is touched)", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect((await response.json()).matchedChannels).toBe(1);
     expect(fetcher.mock.calls[0]?.[0]).toBe("https://challenges.cloudflare.com/turnstile/v0/siteverify");
+  });
+
+  it("/epg accepts a bounded POST and learns an exact provider-name alias", async () => {
+    const regional = "https://epgshare01.online/epgshare01/epg_ripper_CA2.xml.gz";
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const href = input instanceof Request ? input.url : input.toString();
+      if (href.includes("/turnstile/v0/siteverify")) {
+        return new Response(JSON.stringify({
+          success: true,
+          hostname: "crowflix.tv",
+          action: "epg_load",
+        }), { status: 200 });
+      }
+      if (href === "https://iptv-org.github.io/api/guides.json") {
+        return new Response("unavailable", { status: 503 });
+      }
+      if (href === regional) {
+        return new Response(`<tv>
+          <channel id="Citytv.Toronto.HD.ca2"><display-name>Citytv Toronto HD</display-name></channel>
+          <programme start="20260823120000 +0000" stop="20260823130000 +0000" channel="Citytv.Toronto.HD.ca2"><title>Toronto News</title></programme>
+        </tv>`, { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const response = await worker.fetch(new Request(
+      "https://relay.example/epg",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Turnstile-Token": "verified-token",
+        },
+        body: JSON.stringify({
+          country: "CA",
+          timeZone: "America/Toronto",
+          channels: [{ id: "CitytvToronto.ca", names: ["Citytv Toronto"] }],
+        }),
+      },
+    ), {
+      TURNSTILE_SECRET: "test-secret",
+      TURNSTILE_ALLOWED_HOSTNAMES: "crowflix.tv",
+      TURNSTILE_EXPECTED_ACTION: "epg_load",
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { programmes: Array<{ channelId: string; title: string }> };
+    expect(body.programmes).toEqual([expect.objectContaining({
+      channelId: "CitytvToronto.ca",
+      title: "Toronto News",
+    })]);
   });
 });
 

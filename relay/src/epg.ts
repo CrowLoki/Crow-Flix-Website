@@ -1,14 +1,13 @@
 import { RelayError } from "./errors";
-import { readBounded } from "./streams";
 import { fetchValidated, validateExternalUrl } from "./urls";
 import type { FetchLike } from "./urls";
 import { XmltvStreamParser } from "./xmltv";
 import type { RelayProgramme } from "./xmltv";
 
 export const GUIDES_URL = "https://iptv-org.github.io/api/guides.json";
-export const GUIDES_MAX_BYTES = 16 * 1024 * 1024;
-/** Decompressed XMLTV budget per source — Worker memory stays bounded. */
-export const XMLTV_MAX_DECOMPRESSED_BYTES = 24 * 1024 * 1024;
+export const GUIDES_MAX_BYTES = 32 * 1024 * 1024;
+/** Decompressed XMLTV budget per source — the parser streams and stores matches only. */
+export const XMLTV_MAX_DECOMPRESSED_BYTES = 96 * 1024 * 1024;
 /** How many ranked guide sources to try before falling back. */
 export const MAX_EPG_SOURCES = 3;
 export const MAX_CHANNEL_IDS = 2_000;
@@ -16,6 +15,8 @@ export const MAX_CHANNEL_ID_LENGTH = 200;
 export const UPSTREAM_TIMEOUT_MS = 25_000;
 
 const RELAY_UA = "crowflix-relay/0.1.0";
+const MAX_GUIDE_OBJECT_CHARS = 128 * 1024;
+const MAX_MATCHED_GUIDE_ENTRIES = 50_000;
 
 /** Wire shape mirrors the app's camelCase GuideResult. */
 export interface GuideResult {
@@ -27,10 +28,17 @@ export interface GuideResult {
 
 export interface GuideSourceEntry {
   url: string;
+  host?: string;
+  format?: string;
 }
 
 export interface GuideEntry {
   channel?: string;
+  feed?: string;
+  site?: string;
+  siteId?: string;
+  siteName?: string;
+  lang?: string;
   sources: GuideSourceEntry[];
 }
 
@@ -49,17 +57,143 @@ export function parseGuidesJson(text: string): GuideEntry[] {
     const record = item as Record<string, unknown>;
     const channel =
       typeof record.channel === "string" ? record.channel : undefined;
+    const feed = typeof record.feed === "string" ? record.feed : undefined;
+    const site = typeof record.site === "string" ? record.site : undefined;
+    const siteId = typeof record.site_id === "string" ? record.site_id : undefined;
+    const siteName = typeof record.site_name === "string" ? record.site_name : undefined;
+    const lang = typeof record.lang === "string" ? record.lang : undefined;
     const rawSources = Array.isArray(record.sources) ? record.sources : [];
     const sources: GuideSourceEntry[] = [];
     for (const source of rawSources) {
       if (typeof source === "object" && source !== null) {
         const url = (source as Record<string, unknown>).url;
-        if (typeof url === "string" && url.length > 0) sources.push({ url });
+        const host = (source as Record<string, unknown>).host;
+        const format = (source as Record<string, unknown>).format;
+        if (typeof url === "string" && url.length > 0) {
+          sources.push({
+            url,
+            ...(typeof host === "string" ? { host } : {}),
+            ...(typeof format === "string" ? { format } : {}),
+          });
+        }
       }
     }
-    guides.push({ channel, sources });
+    guides.push({
+      ...(channel !== undefined ? { channel } : {}),
+      ...(feed !== undefined ? { feed } : {}),
+      ...(site !== undefined ? { site } : {}),
+      ...(siteId !== undefined ? { siteId } : {}),
+      ...(siteName !== undefined ? { siteName } : {}),
+      ...(lang !== undefined ? { lang } : {}),
+      sources,
+    });
   }
   return guides;
+}
+
+export async function streamGuidesJson(
+  body: ReadableStream<Uint8Array>,
+  wantedIds: Iterable<string>,
+  maximumBytes = GUIDES_MAX_BYTES,
+): Promise<GuideEntry[]> {
+  const wanted = new Set(wantedIds);
+  const output: GuideEntry[] = [];
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let received = 0;
+  let current = "";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let oversized = false;
+
+  const consume = (text: string) => {
+    for (const character of text) {
+      if (depth === 0) {
+        if (character !== "{") continue;
+        depth = 1;
+        current = "{";
+        oversized = false;
+        inString = false;
+        escaped = false;
+        continue;
+      }
+      if (!oversized) {
+        current += character;
+        if (current.length > MAX_GUIDE_OBJECT_CHARS) {
+          current = "";
+          oversized = true;
+        }
+      }
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') {
+        inString = true;
+        continue;
+      }
+      if (character === "{") depth += 1;
+      else if (character === "}") {
+        depth -= 1;
+        if (depth !== 0) continue;
+        if (!oversized) {
+          const [entry] = parseGuidesJson(`[${current}]`);
+          if (entry?.channel && wanted.has(entry.channel)) output.push(entry);
+        }
+        current = "";
+        oversized = false;
+        if (output.length >= MAX_MATCHED_GUIDE_ENTRIES) return false;
+      }
+    }
+    return true;
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > maximumBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new RelayError(502, "The guides index exceeded the relay size limit.");
+      }
+      if (!consume(decoder.decode(value, { stream: true }))) {
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+    }
+    consume(decoder.decode());
+  } finally {
+    reader.releaseLock();
+  }
+  return output;
+}
+
+function copyGuideNames(
+  input: ReadonlyMap<string, readonly string[]>,
+): Map<string, string[]> {
+  return new Map([...input].map(([id, names]) => [id, [...names]]));
+}
+
+export function enrichGuideNames(
+  namesByChannel: ReadonlyMap<string, readonly string[]>,
+  guides: GuideEntry[],
+  wantedIds: Iterable<string>,
+): Map<string, string[]> {
+  const output = copyGuideNames(namesByChannel);
+  const wanted = new Set(wantedIds);
+  for (const guide of guides) {
+    if (!guide.channel || !wanted.has(guide.channel) || !guide.siteName) continue;
+    const names = output.get(guide.channel) || [];
+    if (!names.some((name) => name.toLowerCase() === guide.siteName!.toLowerCase())) {
+      names.push(guide.siteName);
+    }
+    output.set(guide.channel, names);
+  }
+  return output;
 }
 
 /**
@@ -219,7 +353,10 @@ function prependChunk(
   });
 }
 
-async function fetchGuides(fetcher: FetchLike): Promise<GuideEntry[]> {
+async function fetchGuides(
+  fetcher: FetchLike,
+  wantedIds: Iterable<string>,
+): Promise<GuideEntry[]> {
   const response = await fetchValidated(
     new URL(GUIDES_URL),
     {
@@ -234,17 +371,15 @@ async function fetchGuides(fetcher: FetchLike): Promise<GuideEntry[]> {
       `The guides index responded ${response.status}.`,
     );
   }
-  const { data, truncated } = await readBounded(response.body, GUIDES_MAX_BYTES);
-  if (truncated) {
-    throw new RelayError(502, "The guides index exceeded the relay size limit.");
-  }
-  return parseGuidesJson(new TextDecoder().decode(data));
+  return streamGuidesJson(response.body, wantedIds);
 }
 
 async function fetchSourceProgrammes(
   sourceUrl: string,
   channelIds: string[],
   fetcher: FetchLike,
+  aliases: ReadonlyMap<string, string> = new Map(),
+  namesByChannel: ReadonlyMap<string, readonly string[]> = new Map(),
 ): Promise<RelayProgramme[]> {
   const target = validateExternalUrl(sourceUrl);
   const response = await fetchValidated(
@@ -261,9 +396,100 @@ async function fetchSourceProgrammes(
   if (!response.ok || !response.body) {
     throw new RelayError(502, `The guide source responded ${response.status}.`);
   }
-  const parser = new XmltvStreamParser(channelIds);
+  const parser = new XmltvStreamParser(
+    [...channelIds, ...aliases.keys()],
+    {},
+    namesByChannel,
+  );
   await streamXmltvBody(response.body, parser);
-  return parser.end();
+  return parser.end().map((programme) => ({
+    ...programme,
+    channelId: aliases.get(programme.channelId) || programme.channelId,
+  }));
+}
+
+type AustralianGuideSource = {
+  city: string;
+  url: string;
+  aliases: Map<string, string>;
+};
+
+type AustralianGuideRegion = {
+  city: string;
+  abc: string;
+  commercial: string;
+  seven: string;
+};
+
+const AUSTRALIAN_GUIDE_REGIONS: Record<string, AustralianGuideRegion> = {
+  "Australia/Adelaide": { city: "Adelaide", abc: "sa", commercial: "sa", seven: "ade" },
+  "Australia/Brisbane": { city: "Brisbane", abc: "qld", commercial: "qld", seven: "bri" },
+  "Australia/Broken_Hill": { city: "Adelaide", abc: "sa", commercial: "sa", seven: "ade" },
+  "Australia/Canberra": { city: "Canberra", abc: "act", commercial: "nsw", seven: "syd" },
+  "Australia/Darwin": { city: "Darwin", abc: "nt", commercial: "sa", seven: "ade" },
+  "Australia/Hobart": { city: "Hobart", abc: "tas", commercial: "vic", seven: "mel" },
+  "Australia/Lindeman": { city: "Brisbane", abc: "qld", commercial: "qld", seven: "bri" },
+  "Australia/Lord_Howe": { city: "Sydney", abc: "nsw", commercial: "nsw", seven: "syd" },
+  "Australia/Melbourne": { city: "Melbourne", abc: "vic", commercial: "vic", seven: "mel" },
+  "Australia/Perth": { city: "Perth", abc: "wa", commercial: "wa", seven: "per" },
+  "Australia/Sydney": { city: "Sydney", abc: "nsw", commercial: "nsw", seven: "syd" },
+};
+
+const AUSTRALIAN_FIXED_ALIASES: Record<string, string> = {
+  "ABCKids.au": "mjh-abc-kids",
+  "ABCEntertains.au": "mjh-abc-me",
+  "ABCNews.au": "mjh-abc-news",
+  "ABCTVPlus.au": "mjh-abc-tv-plus",
+  "AusbizTV.au": "mjh-ausbiz-fast",
+  "CricketGold.au": "mjh-cricketgold-fast",
+  "Racingcom.au": "mjh-racing-fast",
+  "SBSWorldWatch.au": "mjh-sbs-6nat",
+  "SkyRacing1.au": "mjh-sky-racing-1",
+  "SkyRacing2.au": "mjh-sky-racing-2",
+  "SkyThoroughbredCentral.au": "mjh-sky-racing-thoroughbred",
+  "TVSN.au": "mjh-tvsn-fast",
+};
+
+const EPGSHARE_PRIMARY_TAGS: Record<string, string> = {
+  BE: "BE2",
+  CA: "CA2",
+  US: "US2",
+};
+
+export function epgSharePrimaryTag(countryCode: string): string {
+  const code = normalizeCountryCode(countryCode);
+  return EPGSHARE_PRIMARY_TAGS[code] || `${code}1`;
+}
+
+export function australianGuideSource(
+  channelIds: Iterable<string>,
+  timeZone: string,
+): AustralianGuideSource | null {
+  const region = AUSTRALIAN_GUIDE_REGIONS[timeZone];
+  if (!region) return null;
+  const requested = new Set(channelIds);
+  const aliases = new Map<string, string>();
+  const add = (channelId: string, alias: string) => {
+    if (requested.has(channelId)) aliases.set(alias, channelId);
+  };
+
+  for (const [channelId, alias] of Object.entries(AUSTRALIAN_FIXED_ALIASES)) {
+    add(channelId, alias);
+  }
+  add("ABCTV.au", `mjh-abc-${region.abc}`);
+  add("Channel7.au", `mjh-seven-${region.seven}`);
+  add("Channel9.au", `mjh-channel-9-${region.commercial}`);
+  add("9Gem.au", `mjh-gem-${region.commercial}`);
+  add("9Go.au", `mjh-go-${region.commercial}`);
+  add("9Life.au", `mjh-life-${region.commercial}`);
+  add("10Bold.au", `mjh-10bold-${region.commercial}`);
+  if (!aliases.size) return null;
+
+  return {
+    city: region.city,
+    url: `https://i.mjh.nz/au/${region.city}/epg.xml.gz`,
+    aliases,
+  };
 }
 
 /**
@@ -275,16 +501,26 @@ export async function loadAutoEpg(
   country: string,
   channelIds: string[],
   fetcher: FetchLike = fetch,
+  timeZone = "",
+  namesByChannel: ReadonlyMap<string, readonly string[]> = new Map(),
 ): Promise<GuideResult> {
   const ids = normalizeChannelIds(channelIds);
   const code = normalizeCountryCode(country);
+  let resolvedNames = copyGuideNames(namesByChannel);
 
   try {
-    const guides = await fetchGuides(fetcher);
+    const guides = await fetchGuides(fetcher, ids);
+    resolvedNames = enrichGuideNames(resolvedNames, guides, ids);
     const ranked = rankGuideSources(guides, ids);
     for (const source of ranked.slice(0, MAX_EPG_SOURCES)) {
       try {
-        const programmes = await fetchSourceProgrammes(source, ids, fetcher);
+        const programmes = await fetchSourceProgrammes(
+          source,
+          ids,
+          fetcher,
+          new Map(),
+          resolvedNames,
+        );
         if (programmes.length > 0) {
           return guideResult(programmes, `IPTV-org EPG · ${source}`);
         }
@@ -296,14 +532,40 @@ export async function loadAutoEpg(
     // guides.json unavailable — fall through to the regional ripper.
   }
 
+  if (code === "AU") {
+    const regional = australianGuideSource(ids, timeZone);
+    if (regional) {
+      try {
+        const programmes = await fetchSourceProgrammes(
+          regional.url,
+          ids,
+          fetcher,
+          regional.aliases,
+          resolvedNames,
+        );
+        if (programmes.length > 0) {
+          return guideResult(programmes, `Australian ${regional.city} guide`);
+        }
+      } catch {
+        // Fall through to the broad EPGShare file.
+      }
+    }
+  }
+
   if (code.length > 0) {
-    const filename = `epg_ripper_${code}1.xml.gz`;
+    const filename = `epg_ripper_${epgSharePrimaryTag(code)}.xml.gz`;
     for (const source of [
       `https://epgshare01.online/epgshare01/${filename}`,
       `https://raw.githubusercontent.com/epgshare01/share01/master/${filename}`,
     ]) {
       try {
-        const programmes = await fetchSourceProgrammes(source, ids, fetcher);
+        const programmes = await fetchSourceProgrammes(
+          source,
+          ids,
+          fetcher,
+          new Map(),
+          resolvedNames,
+        );
         if (programmes.length > 0) {
           return guideResult(programmes, `Automatic regional guide · ${code}`);
         }
