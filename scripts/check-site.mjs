@@ -97,7 +97,7 @@ const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
 for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", "CrowFlix Free", "Australia, United States & English first", "Australia / US / English first", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
-for (const value of ["HoverPreview", "CrowGuide", "explore-popout"]) {
+for (const value of ["HoverPreview", "CrowGuide", "explore-popout", "CROWFLIX_HISTORY_KEY", "popstate"]) {
   assert(app.includes(value), `Requested CrowFlix interaction is missing: ${value}`);
 }
 
