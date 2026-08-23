@@ -33,6 +33,7 @@ for (const file of [
   "src/main.tsx",
   "src/App.tsx",
   "src/App.css",
+  "src/audiencePreferences.ts",
   "src/webCatalog.ts",
   "src/officialFreeCollection.ts",
   "src/additivePlaylists.ts",
@@ -93,9 +94,13 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", "CrowFlix Free", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", "CrowFlix Free", "Australia, United States & English first", "Australia / US / English first", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
+
+const appCss = await readFile(path.join(repositoryRoot, "src", "App.css"), "utf8");
+assert(appCss.includes('/cursors/16/normal.png'), "CrowFlix still uses the full-size normal cursor asset");
+assert(!appCss.includes('/cursors/32/normal.png'), "CrowFlix still references the full-size normal cursor asset");
 for (const value of ["runPreflightQueue(", "preflightSource(", "browserPreflightRoutes("]) {
   assert(!app.includes(value), `The browser app still probes channel sources before the viewer selects one: ${value}`);
 }

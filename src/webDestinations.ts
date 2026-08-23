@@ -111,10 +111,14 @@ const directorySeedDrafts: WebDestinationDraft[] = [
 // These are links to the directory pages themselves. CrowFlix does not copy or
 // redistribute the unlicensed provider lists published on those pages.
 const officialFreeCollectionDrafts: WebDestinationDraft[] =
-  OFFICIAL_FREE_COLLECTION_DRAFTS.map((item) => ({
+  OFFICIAL_FREE_COLLECTION_DRAFTS.map(({ audienceCountries: _audienceCountries, ...item }) => ({
     ...item,
-    categories: ["CrowFlix Free Collection"],
-    note: "CrowFlix selection · opens the original official publisher page. Free availability and regional catalogue remain controlled by that publisher and YouTube.",
+    categories: [
+      "CrowFlix Free Collection",
+      "English first",
+      ...(_audienceCountries?.length ? ["Australia & United States"] : []),
+    ],
+    note: "CrowFlix English-first selection · opens the original official publisher page. Free availability and regional catalogue remain controlled by that publisher and YouTube.",
     sourceDirectory: "CrowFlix Free Collection",
   }));
 
