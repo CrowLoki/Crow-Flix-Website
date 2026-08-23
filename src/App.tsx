@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type RefObject,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "@fontsource/inter/400.css";
@@ -46,6 +47,11 @@ import {
   channelMatchesTimezone,
 } from "./broadcastArea";
 import { mergeChannelsByKey } from "./catalogMerge";
+import {
+  channelMatchesMetadataFilters,
+  channelProviders,
+  sourceHostname,
+} from "./catalogMetadata";
 import {
   assertImportFileSize,
   MAX_PLAYLIST_IMPORT_BYTES,
@@ -89,6 +95,7 @@ import {
 } from "./webDestinations";
 import { appendZapDigit, resolveZapNumber, zapTarget } from "./zap";
 import { loadWebCatalog } from "./webCatalog";
+import { MAIN_FEED_OPTION_ID } from "./webCatalog";
 import {
   loadRelayGuide,
   relayFetchText,
@@ -111,7 +118,11 @@ type BrowseMode =
   | "regions"
   | "subdivisions"
   | "cities"
-  | "timezones";
+  | "timezones"
+  | "owners"
+  | "networks"
+  | "feeds"
+  | "providers";
 
 const PlaybackAvailabilityContext = createContext<Record<string, ChannelAvailability>>({});
 
@@ -156,6 +167,10 @@ type Catalog = {
   subdivisions: NamedOption[];
   cities: NamedOption[];
   timezones: NamedOption[];
+  owners: NamedOption[];
+  networks: NamedOption[];
+  feeds: NamedOption[];
+  providers: NamedOption[];
   updatedAt: string;
   source: string;
 };
@@ -192,7 +207,7 @@ const demoChannels: Channel[] = Array.from({ length: 72 }, (_, index) => {
   return {
     key: `preview-${index}`, id: `Preview${index}.${country.toLowerCase()}`, name: index < demoDefinitions.length ? base : `${base} ${Math.floor(index / demoDefinitions.length) + 1}`,
     logo: null, categories: [category], country, languages: ["English"], broadcastArea: [`c/${country}`], sources: [],
-    feed: null, format: index % 3 === 0 ? "1080p" : "720p", network: "CrowFlix Preview", website: null, isMain: true,
+    feed: null, format: index % 3 === 0 ? "1080p" : "720p", network: "CrowFlix Preview", website: null, provenance: ["CrowFlix Preview"], isMain: true,
   };
 });
 
@@ -217,6 +232,10 @@ const demoCatalog: Catalog = {
   languages: [{ id: "English", name: "English", count: demoChannels.length }],
   regions: [{ code: "WORLD", name: "Worldwide", countries: ["AU", "US", "UK", "CA", "DE", "FR", "JP", "NZ", "IT", "NO"], count: demoChannels.length }],
   subdivisions: [], cities: [], timezones: [],
+  owners: [],
+  networks: [{ id: "CrowFlix Preview", name: "CrowFlix Preview", count: demoChannels.length }],
+  feeds: [{ id: MAIN_FEED_OPTION_ID, name: "Main feed", count: demoChannels.length }],
+  providers: [{ id: "CrowFlix Preview", name: "CrowFlix Preview", count: demoChannels.length }],
   updatedAt: new Date().toISOString(), source: "CrowFlix browser preview",
 };
 
@@ -229,6 +248,10 @@ const emptyCatalog: Catalog = {
   subdivisions: [],
   cities: [],
   timezones: [],
+  owners: [],
+  networks: [],
+  feeds: [],
+  providers: [],
   updatedAt: "",
   source: "IPTV-org catalogue unavailable",
 };
@@ -333,6 +356,46 @@ function stored<T>(key: string, fallback: T): T {
   catch { return fallback; }
 }
 
+function useModalFocusTrap(
+  dialogRef: RefObject<HTMLElement | null>,
+  onClose: () => void,
+): void {
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const focusable = () => [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    ) || [])];
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previous?.focus();
+    };
+  }, [dialogRef, onClose]);
+}
+
 export default function App() {
   const isDesktop = Boolean(window.__TAURI_INTERNALS__);
   const [initialWebLibrary] = useState(() =>
@@ -352,6 +415,10 @@ export default function App() {
   const [subdivision, setSubdivision] = useState("all");
   const [city, setCity] = useState("all");
   const [timezone, setTimezone] = useState("all");
+  const [owner, setOwner] = useState("all");
+  const [network, setNetwork] = useState("all");
+  const [feed, setFeed] = useState("all");
+  const [provider, setProvider] = useState("all");
   const [guideCountry, setGuideCountry] = useState(preferredCountry());
   const [programmes, setProgrammes] = useState<Programme[]>([]);
   const [guideStatus, setGuideStatus] = useState("Preparing the live guide…");
@@ -359,6 +426,7 @@ export default function App() {
   const [guideNeedsVerification, setGuideNeedsVerification] = useState(false);
   const [guideVerificationError, setGuideVerificationError] = useState<string | null>(null);
   const [playing, setPlaying] = useState<Channel | null>(null);
+  const [detailsChannel, setDetailsChannel] = useState<Channel | null>(null);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [sourceUrl, setSourceUrl] = useState("");
   const [epgUrl, setEpgUrl] = useState("");
@@ -425,6 +493,7 @@ export default function App() {
     window.setTimeout(() => setToast(""), 3500);
   }, []);
   const closeSourceDialog = useCallback(() => setSourceOpen(false), []);
+  const closeChannelDetails = useCallback(() => setDetailsChannel(null), []);
 
   const loadCatalog = useCallback(async (force = false) => {
     setLoading(true);
@@ -825,6 +894,7 @@ export default function App() {
         timezone !== "all"
         && !channelMatchesTimezone(channel, timezone)
       ) return false;
+      if (!channelMatchesMetadataFilters(channel, { owner, network, feed, provider })) return false;
       if (needle && !`${channel.name} ${(channel.altNames || []).join(" ")} ${(channel.owners || []).join(" ")} ${(channel.provenance || []).join(" ")} ${channel.network || ""} ${channel.categories.join(" ")} ${channel.languages.join(" ")} ${(channel.timezones || []).join(" ")} ${channel.broadcastArea.join(" ")} ${countryName(channel.country)}`.toLowerCase().includes(needle)) return false;
       return true;
     });
@@ -834,7 +904,7 @@ export default function App() {
       healthNow,
       sourcePreflights,
     );
-  }, [catalog.channels, catalog.regions, category, city, country, healthNow, language, playbackHealth, query, region, sourcePreflights, subdivision, timezone]);
+  }, [catalog.channels, catalog.regions, category, city, country, feed, healthNow, language, network, owner, playbackHealth, provider, query, region, sourcePreflights, subdivision, timezone]);
 
   const favouriteChannels = useMemo(() => favourites.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, favourites]);
   const recentChannels = useMemo(() => recent.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, recent]);
@@ -891,6 +961,10 @@ export default function App() {
     subdivision,
     city,
     timezone,
+    owner,
+    network,
+    feed,
+    provider,
     guideCountry,
     view === "favourites" ? favourites.join("\u0000") : "",
     playing?.key || "",
@@ -1002,11 +1076,11 @@ export default function App() {
       {loading && <LoadingOverlay message={loadingMessage} />}
       {catalogError && <CatalogErrorBanner message={catalogError} hasCatalog={catalog.channels.length > 0} loading={loading} onRetry={() => void loadCatalog(catalog.channels.length > 0)} />}
       <main>
-        {view === "home" && <HomeView channels={rankedCatalogChannels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onInfo={() => setView("guide")} />}
-        {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} subdivision={subdivision} setSubdivision={setSubdivision} city={city} setCity={setCity} timezone={timezone} setTimezone={setTimezone} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} />}
+        {view === "home" && <HomeView channels={rankedCatalogChannels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onGuide={() => setView("guide")} onInfo={setDetailsChannel} />}
+        {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} subdivision={subdivision} setSubdivision={setSubdivision} city={city} setCity={setCity} timezone={timezone} setTimezone={setTimezone} owner={owner} setOwner={setOwner} network={network} setNetwork={setNetwork} feed={feed} setFeed={setFeed} provider={provider} setProvider={setProvider} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} />}
         {view === "guide" && <GuideView catalog={catalog} country={guideCountry} setCountry={setGuideCountry} programmes={programmes} clock={clock} status={guideStatus} loading={guideLoading} requiresVerification={!isDesktop && guideNeedsVerification} verificationError={guideVerificationError} onVerified={(token) => void loadGuide(guideCountry, true, token)} onVerificationError={(message) => { setGuideVerificationError(message || null); if (message) setGuideStatus(message); }} onRefresh={() => void loadGuide(guideCountry, true)} onPlay={play} />}
         {view === "web" && <WebDestinationsView items={webDestinations} query={query} onOpen={(item) => void openWebsite(item.url, item.title)} onSave={saveWebDestination} onDelete={deleteWebDestination} onImport={importWebDestinations} onMessage={showToast} />}
-        {view === "favourites" && <FavouritesView channels={favouriteChannels} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onBrowse={() => setView("live")} />}
+        {view === "favourites" && <FavouritesView channels={favouriteChannels} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} onBrowse={() => setView("live")} />}
         {view === "about" && <AboutView onOpen={(url, title) => void openWebsite(url, title)} />}
       </main>
       {view === "web"
@@ -1015,6 +1089,7 @@ export default function App() {
           ? <footer className="status-bar"><span><Info weight="fill" /> CrowFlix 0.5.1</span><span>Copyright © 2026 Crow · AGPL-3.0-only</span></footer>
         : <footer className="status-bar"><span><Broadcast weight="fill" /> {catalog.channels.length.toLocaleString()} catalogued · {availabilitySummary.verified.toLocaleString()} live · {availabilitySummary.ready.toLocaleString()} ready · {sourceCount.toLocaleString()} sources</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
       {playing && <Player channel={playing} now={currentProgramme(programmes, playing.id, clock)} next={nextProgramme(programmes, playing.id, clock)} playback={playback} videoRef={videoRef} zapNotice={zapNotice} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={() => setPlaying(null)} />}
+      {detailsChannel && <ChannelDetails channel={detailsChannel} now={currentProgramme(programmes, detailsChannel.id, clock)} next={nextProgramme(programmes, detailsChannel.id, clock)} favourite={favourites.includes(detailsChannel.key)} onPlay={(channel) => { closeChannelDetails(); play(channel); }} onFavourite={toggleFavourite} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={closeChannelDetails} />}
       {sourceOpen && <SourceDialog sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} epgUrl={epgUrl} setEpgUrl={setEpgUrl} loading={loading || guideLoading} onClose={closeSourceDialog} onPlaylistUrl={() => void importPlaylistUrl()} onPlaylistFile={(file) => void importPlaylistFile(file)} onEpgUrl={() => void importEpgUrl()} onEpgFile={(file) => void importEpgFile(file)} />}
       {toast && <div className="toast"><CheckCircle weight="fill" />{toast}</div>}
     </div>
@@ -1042,7 +1117,7 @@ function CatalogErrorBanner({ message, hasCatalog, loading, onRetry }: { message
   </section>;
 }
 
-function HomeView({ channels, programmes, clock, hero, heroNow, heroNext, recent, favourites, onPlay, onFavourite, onInfo }: { channels: Channel[]; programmes: Programme[]; clock: Date; hero?: Channel; heroNow?: Programme; heroNext?: Programme; recent: Channel[]; favourites: string[]; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onInfo: () => void }) {
+function HomeView({ channels, programmes, clock, hero, heroNow, heroNext, recent, favourites, onPlay, onFavourite, onGuide, onInfo }: { channels: Channel[]; programmes: Programme[]; clock: Date; hero?: Channel; heroNow?: Programme; heroNext?: Programme; recent: Channel[]; favourites: string[]; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onGuide: () => void; onInfo: (channel: Channel) => void }) {
   const availabilityByChannel = useContext(PlaybackAvailabilityContext);
   const rail = (category: string) => channels.filter((channel) => channel.categories.includes(category)).slice(0, 24);
   if (!hero) {
@@ -1069,29 +1144,29 @@ function HomeView({ channels, programmes, clock, hero, heroNow, heroNext, recent
         <div className="hero-meta"><strong>{hero.name}</strong><span>{channelQuality(hero)}</span><span>{countryName(hero.country)}</span><span>{titleCase(hero.categories[0])}</span></div>
         <p>{heroNow?.description || `Watch ${hero.name} live from the worldwide CrowFlix channel catalogue.`}</p>
         {heroNext && <div className="up-next"><Clock /><span><small>UP NEXT · {formatTime(new Date(heroNext.start))}</small><strong>{heroNext.title}</strong></span></div>}
-        <div className="hero-actions"><button className="primary" onClick={() => onPlay(hero)}><Play weight="fill" /> Watch live</button><button className="secondary" onClick={onInfo}><Info /> Open guide</button><button className="icon-button" aria-label="Toggle featured channel favourite" onClick={() => onFavourite(hero)}><Heart weight={favourites.includes(hero.key) ? "fill" : "regular"} /></button></div>
+        <div className="hero-actions"><button className="primary" onClick={() => onPlay(hero)}><Play weight="fill" /> Watch live</button><button className="secondary" onClick={onGuide}><CalendarDots /> Open guide</button><button className="secondary" onClick={() => onInfo(hero)}><Info /> Channel details</button><button className="icon-button" aria-label="Toggle featured channel favourite" onClick={() => onFavourite(hero)}><Heart weight={favourites.includes(hero.key) ? "fill" : "regular"} /></button></div>
       </div>
     </section>
     <div className="home-content">
-      {recent.length > 0 && <ChannelRail title="Continue watching" channels={recent} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} />}
-      <ChannelRail title="Live news" channels={rail("news")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} />
-      <ChannelRail title="Movies on now" channels={rail("movies")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} />
-      <ChannelRail title="Live sports" channels={rail("sports")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} />
-      <ChannelRail title="Documentaries and discovery" channels={[...rail("documentary"), ...rail("science")].slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} />
-      <ChannelRail title="Music and entertainment" channels={[...rail("music"), ...rail("entertainment")].slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} />
+      {recent.length > 0 && <ChannelRail title="Continue watching" channels={recent} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />}
+      <ChannelRail title="Live news" channels={rail("news")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="Movies on now" channels={rail("movies")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="Live sports" channels={rail("sports")} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="Documentaries and discovery" channels={[...rail("documentary"), ...rail("science")].slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
+      <ChannelRail title="Music and entertainment" channels={[...rail("music"), ...rail("entertainment")].slice(0, 24)} programmes={programmes} clock={clock} favourites={favourites} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />
     </div>
   </div>;
 }
 
-function ChannelRail({ title, channels, programmes, clock, favourites, onPlay, onFavourite }: { title: string; channels: Channel[]; programmes: Programme[]; clock: Date; favourites: string[]; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void }) {
+function ChannelRail({ title, channels, programmes, clock, favourites, onPlay, onFavourite, onInfo }: { title: string; channels: Channel[]; programmes: Programme[]; clock: Date; favourites: string[]; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onInfo: (channel: Channel) => void }) {
   const railRef = useRef<HTMLDivElement>(null);
   if (!channels.length) return null;
-  return <section className="rail-section"><div className="section-heading"><h2>{title}</h2><span>{channels.length.toLocaleString()} channels</span></div><div className="rail-wrap"><button className="rail-arrow left" aria-label={`Scroll ${title} left`} onClick={() => railRef.current?.scrollBy({ left: -900, behavior: "smooth" })}><CaretLeft /></button><div className="channel-rail" ref={railRef}>{channels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} />)}</div><button className="rail-arrow right" aria-label={`Scroll ${title} right`} onClick={() => railRef.current?.scrollBy({ left: 900, behavior: "smooth" })}><CaretRight /></button></div></section>;
+  return <section className="rail-section"><div className="section-heading"><h2>{title}</h2><span>{channels.length.toLocaleString()} channels</span></div><div className="rail-wrap"><button className="rail-arrow left" aria-label={`Scroll ${title} left`} onClick={() => railRef.current?.scrollBy({ left: -900, behavior: "smooth" })}><CaretLeft /></button><div className="channel-rail" ref={railRef}>{channels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><button className="rail-arrow right" aria-label={`Scroll ${title} right`} onClick={() => railRef.current?.scrollBy({ left: 900, behavior: "smooth" })}><CaretRight /></button></div></section>;
 }
 
-function ChannelCard({ channel, programme, favourite, onPlay, onFavourite }: { channel: Channel; programme?: Programme; favourite: boolean; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void }) {
+function ChannelCard({ channel, programme, favourite, onPlay, onFavourite, onInfo }: { channel: Channel; programme?: Programme; favourite: boolean; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onInfo: (channel: Channel) => void }) {
   const availability = useContext(PlaybackAvailabilityContext)[channel.key] || "unverified";
-  return <article className="channel-card"><button className="card-main" onClick={() => onPlay(channel)}><div className="card-image">{channel.logo ? <img src={channel.logo} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; event.currentTarget.className = "fallback-logo"; }} /> : <img className="fallback-logo" src={BRAND_ICON} alt="" />}<span className={`live-badge availability-${availability}`}>{availabilityLabel(availability)}</span><span className="quality-badge">{channelQuality(channel)}</span><span className="play-overlay"><Play weight="fill" /></span></div><div className="card-copy"><strong>{programme?.title || channel.name}</strong><span>{channel.name}</span><small>{countryName(channel.country)} · {titleCase(channel.categories[0])}</small></div></button><button className="heart-button" onClick={() => onFavourite(channel)} aria-label={`Toggle ${channel.name} favourite`}><Heart weight={favourite ? "fill" : "regular"} /></button></article>;
+  return <article className="channel-card"><button className="card-main" onClick={() => onPlay(channel)}><div className="card-image">{channel.logo ? <img src={channel.logo} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; event.currentTarget.className = "fallback-logo"; }} /> : <img className="fallback-logo" src={BRAND_ICON} alt="" />}<span className={`live-badge availability-${availability}`}>{availabilityLabel(availability)}</span><span className="quality-badge">{channelQuality(channel)}</span><span className="play-overlay"><Play weight="fill" /></span></div><div className="card-copy"><strong>{programme?.title || channel.name}</strong><span>{channel.name}</span><small>{countryName(channel.country)} · {titleCase(channel.categories[0])}</small></div></button><button className="details-button" onClick={() => onInfo(channel)} aria-label={`Show ${channel.name} details`}><Info /></button><button className="heart-button" onClick={() => onFavourite(channel)} aria-label={`Toggle ${channel.name} favourite`}><Heart weight={favourite ? "fill" : "regular"} /></button></article>;
 }
 
 type LiveViewProps = {
@@ -1104,12 +1179,17 @@ type LiveViewProps = {
   subdivision: string; setSubdivision: (value: string) => void;
   city: string; setCity: (value: string) => void;
   timezone: string; setTimezone: (value: string) => void;
+  owner: string; setOwner: (value: string) => void;
+  network: string; setNetwork: (value: string) => void;
+  feed: string; setFeed: (value: string) => void;
+  provider: string; setProvider: (value: string) => void;
   favourites: string[]; programmes: Programme[]; clock: Date;
   onPlay: (channel: Channel) => void;
   onFavourite: (channel: Channel) => void;
+  onInfo: (channel: Channel) => void;
 };
 
-function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, subdivision, setSubdivision, city, setCity, timezone, setTimezone, favourites, programmes, clock, onPlay, onFavourite }: LiveViewProps) {
+function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, subdivision, setSubdivision, city, setCity, timezone, setTimezone, owner, setOwner, network, setNetwork, feed, setFeed, provider, setProvider, favourites, programmes, clock, onPlay, onFavourite, onInfo }: LiveViewProps) {
   const [catalogOrder, setCatalogOrder] = useState<"ranked" | "alphabetical">("ranked");
   const [page, setPage] = useState(1);
   const visibleChannels = useMemo(() => catalogOrder === "ranked"
@@ -1119,7 +1199,7 @@ function LiveView({ catalog, channels, mode, setMode, category, setCategory, cou
   const pageCount = Math.max(1, Math.ceil(visibleChannels.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const matchingSources = visibleChannels.reduce((total, channel) => total + channelSources(channel).length, 0);
-  useEffect(() => setPage(1), [catalogOrder, category, city, country, language, region, subdivision, timezone, visibleChannels.length]);
+  useEffect(() => setPage(1), [catalogOrder, category, city, country, feed, language, network, owner, provider, region, subdivision, timezone, visibleChannels.length]);
   const optionsByMode: Record<BrowseMode, NamedOption[]> = {
     categories: catalog.categories,
     countries: catalog.countries.map((item) => ({ id: item.code, name: `${item.flag} ${item.name}`, count: item.count })),
@@ -1128,6 +1208,10 @@ function LiveView({ catalog, channels, mode, setMode, category, setCategory, cou
     subdivisions: catalog.subdivisions,
     cities: catalog.cities,
     timezones: catalog.timezones,
+    owners: catalog.owners,
+    networks: catalog.networks,
+    feeds: catalog.feeds,
+    providers: catalog.providers,
   };
   const selectedByMode: Record<BrowseMode, string> = {
     categories: category,
@@ -1137,6 +1221,10 @@ function LiveView({ catalog, channels, mode, setMode, category, setCategory, cou
     subdivisions: subdivision,
     cities: city,
     timezones: timezone,
+    owners: owner,
+    networks: network,
+    feeds: feed,
+    providers: provider,
   };
   const modeOptions = optionsByMode[mode];
   const selected = selectedByMode[mode];
@@ -1148,15 +1236,46 @@ function LiveView({ catalog, channels, mode, setMode, category, setCategory, cou
     if (mode === "subdivisions") setSubdivision(value);
     if (mode === "cities") setCity(value);
     if (mode === "timezones") setTimezone(value);
+    if (mode === "owners") setOwner(value);
+    if (mode === "networks") setNetwork(value);
+    if (mode === "feeds") setFeed(value);
+    if (mode === "providers") setProvider(value);
   };
   const clearAll = () => {
     setCategory("all"); setCountry("all"); setLanguage("all"); setRegion("all");
     setSubdivision("all"); setCity("all"); setTimezone("all");
+    setOwner("all"); setNetwork("all"); setFeed("all"); setProvider("all");
   };
+  const browseModes: Array<[BrowseMode, React.ReactNode, string]> = [
+    ["categories", <ListBullets />, "Categories"],
+    ["countries", <GlobeHemisphereWest />, "Countries"],
+    ["languages", <Translate />, "Languages"],
+    ["regions", <MapPin />, "Regions"],
+    ["subdivisions", <MapPin />, "States / provinces"],
+    ["cities", <House />, "Cities"],
+    ["timezones", <Clock />, "Timezones"],
+    ["owners", <House />, "Owners"],
+    ["networks", <Broadcast />, "Networks"],
+    ["feeds", <Television />, "Feeds"],
+    ["providers", <CloudArrowUp />, "Source providers"],
+  ];
+  const activeFilterLabels = [
+    category !== "all" ? titleCase(category) : null,
+    country !== "all" ? countryName(country) : null,
+    language !== "all" ? language : null,
+    region !== "all" ? catalog.regions.find((item) => item.code === region)?.name || region : null,
+    subdivision !== "all" ? catalog.subdivisions.find((item) => item.id === subdivision)?.name || subdivision : null,
+    city !== "all" ? catalog.cities.find((item) => item.id === city)?.name || city : null,
+    timezone !== "all" ? timezone : null,
+    owner !== "all" ? owner : null,
+    network !== "all" ? network : null,
+    feed !== "all" ? catalog.feeds.find((item) => item.id === feed)?.name || feed : null,
+    provider !== "all" ? provider : null,
+  ].filter((label): label is string => Boolean(label));
   return <div className="browse-page">
     <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television</span><h1>Browse Live TV</h1><p>The complete matching catalogue stays visible. Working routes rank first, while unverified, regional, part-time, and offline entries remain clearly labelled and reachable.</p></div><div className="catalog-number"><strong>{visibleChannels.length.toLocaleString()}</strong><span>catalogued · {matchingSources.toLocaleString()} sources</span></div></div>
-    <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{([["categories", <ListBullets />, "Categories"], ["countries", <GlobeHemisphereWest />, "Countries"], ["languages", <Translate />, "Languages"], ["regions", <MapPin />, "Regions"], ["subdivisions", <MapPin />, "States / provinces"], ["cities", <House />, "Cities"], ["timezones", <Clock />, "Timezones"]] as Array<[BrowseMode, React.ReactNode, string]>).map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{category !== "all" && <b>{titleCase(category)}</b>}{country !== "all" && <b>{countryName(country)}</b>}{language !== "all" && <b>{language}</b>}{region !== "all" && <b>{catalog.regions.find((item) => item.code === region)?.name || region}</b>}{subdivision !== "all" && <b>{catalog.subdivisions.find((item) => item.id === subdivision)?.name || subdivision}</b>}{city !== "all" && <b>{catalog.cities.find((item) => item.id === city)?.name || city}</b>}{timezone !== "all" && <b>{timezone}</b>}<button onClick={clearAll}>Clear all</button></div></aside>
-      <section className="browse-results"><div className="filter-strip"><button className={selected === "all" ? "active" : ""} onClick={() => select("all")}>All</button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => select(item.id)}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}</span></div><div className="availability-switch"><button className={catalogOrder === "ranked" ? "active" : ""} onClick={() => setCatalogOrder("ranked")}>Working first</button><button className={catalogOrder === "alphabetical" ? "active" : ""} onClick={() => setCatalogOrder("alphabetical")}>A–Z</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{visibleChannels.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE).map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>
+    <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{browseModes.map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{activeFilterLabels.map((label, index) => <b key={`${label}-${index}`}>{label}</b>)}<button onClick={clearAll}>Clear all</button></div></aside>
+      <section className="browse-results"><div className="filter-strip"><button className={selected === "all" ? "active" : ""} onClick={() => select("all")}>All</button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => select(item.id)}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}</span></div><div className="availability-switch"><button className={catalogOrder === "ranked" ? "active" : ""} onClick={() => setCatalogOrder("ranked")}>Working first</button><button className={catalogOrder === "alphabetical" ? "active" : ""} onClick={() => setCatalogOrder("alphabetical")}>A–Z</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{visibleChannels.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE).map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>
   </div>;
 }
 
@@ -1188,8 +1307,8 @@ function GuideView({ catalog, country, setCountry, programmes, clock, status, lo
   return <div className="guide-page"><div className="page-hero guide-title"><div><span className="overline"><CalendarDots /> Live programme guide</span><h1>What’s on now</h1><p>{clock.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</p></div><div className="guide-controls"><label><span>Guide region</span><select value={canonicalCountryCode(country)} onChange={(event) => setCountry(canonicalCountryCode(event.target.value))}>{catalog.countries.map((item) => <option key={item.code} value={canonicalCountryCode(item.code)}>{item.flag} {item.name} ({item.count.toLocaleString()})</option>)}</select></label><button onClick={onRefresh} disabled={loading}><ArrowsClockwise className={loading ? "spin" : ""} /> Refresh</button></div></div>{requiresVerification && <TurnstileGuideGate error={verificationError} onVerified={onVerified} onError={onVerificationError} />}<div className="guide-status"><span className="signal-dot" /><strong>{loading ? "Updating live programme data…" : status}</strong><span>{listedCountryChannels.toLocaleString()} with listings · {countryChannels.length.toLocaleString()} channels total</span></div><div className="guide-shell"><div className="guide-times"><div>Channel</div>{times.map((time) => <span key={time.toISOString()}>{formatTime(time)}</span>)}</div><div className="guide-now-line" style={{ left: `calc(260px + ${((clock.getTime() - start.getTime()) / (end.getTime() - start.getTime())) * 100}% * (1 - 260px / 100%))` }}><b>NOW</b></div>{channels.map((channel) => { const items = (byChannel.get(channel.id) || []).filter((item) => new Date(item.stop) > start && new Date(item.start) < end); return <div className="guide-row" key={channel.key}><button className="guide-channel" onClick={() => onPlay(channel)}>{channel.logo ? <img src={channel.logo} alt="" /> : <img src={BRAND_ICON} alt="" />}<span><strong>{channel.name}</strong><small>{titleCase(channel.categories[0])}</small></span></button><div className="programme-track">{items.length ? items.map((item) => { const itemStart = Math.max(start.getTime(), new Date(item.start).getTime()); const itemEnd = Math.min(end.getTime(), new Date(item.stop).getTime()); const left = ((itemStart - start.getTime()) / (end.getTime() - start.getTime())) * 100; const width = ((itemEnd - itemStart) / (end.getTime() - start.getTime())) * 100; const live = new Date(item.start) <= clock && new Date(item.stop) > clock; return <button key={`${item.channelId}-${item.start}`} className={live ? "live" : ""} style={{ left: `${left}%`, width: `${width}%` }} onClick={() => onPlay(channel)}><strong>{item.title}</strong><small>{formatTime(new Date(item.start))}–{formatTime(new Date(item.stop))}</small></button>; }) : <button className="no-listing" onClick={() => onPlay(channel)}><strong>Live broadcast</strong><small>Programme details unavailable</small></button>}</div></div>; })}</div>{guidePage.total > GUIDE_PAGE_SIZE && <div className="guide-pagination"><span>Showing {guidePage.start}–{guidePage.end} of {guidePage.total.toLocaleString()} channels</span><Pagination page={safePage} pageCount={guidePageCount} onPage={setPage} /></div>}{!loading && !programmes.length && !requiresVerification && <EmptyState title="No programme listings matched" copy="The channels remain available to watch live while CrowFlix refreshes guide sources." />}</div>;
 }
 
-function FavouritesView({ channels, favourites, programmes, clock, onPlay, onFavourite, onBrowse }: { channels: Channel[]; favourites: string[]; programmes: Programme[]; clock: Date; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onBrowse: () => void }) {
-  return <div className="browse-page"><div className="page-hero"><div><span className="overline"><Heart weight="fill" /> Your CrowFlix library</span><h1>My List</h1><p>Your saved live channels, ready whenever you are.</p></div><div className="catalog-number"><strong>{channels.length}</strong><span>saved channels</span></div></div>{channels.length ? <div className="channel-grid standalone-grid">{channels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} />)}</div> : <EmptyState title="Your list is waiting" copy="Save channels from Home or Live TV and they will appear here." action="Browse live TV" onAction={onBrowse} />}</div>;
+function FavouritesView({ channels, favourites, programmes, clock, onPlay, onFavourite, onInfo, onBrowse }: { channels: Channel[]; favourites: string[]; programmes: Programme[]; clock: Date; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onInfo: (channel: Channel) => void; onBrowse: () => void }) {
+  return <div className="browse-page"><div className="page-hero"><div><span className="overline"><Heart weight="fill" /> Your CrowFlix library</span><h1>My List</h1><p>Your saved live channels, ready whenever you are.</p></div><div className="catalog-number"><strong>{channels.length}</strong><span>saved channels</span></div></div>{channels.length ? <div className="channel-grid standalone-grid">{channels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div> : <EmptyState title="Your list is waiting" copy="Save channels from Home or Live TV and they will appear here." action="Browse live TV" onAction={onBrowse} />}</div>;
 }
 
 function AboutView({ onOpen }: { onOpen: (url: string, title: string) => void }) {
@@ -1227,6 +1346,72 @@ function AboutView({ onOpen }: { onOpen: (url: string, title: string) => void })
       {links.map(([label, url]) => <button key={url} onClick={() => onOpen(url, label)}><ArrowSquareOut />{label}</button>)}
     </div>
   </section>;
+}
+
+function DetailItem({ label, value }: { label: string; value?: string | null }) {
+  if (!value) return null;
+  return <div className="detail-item"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function ChannelDetails({ channel, now, next, favourite, onPlay, onFavourite, onOpenWebsite, onClose }: {
+  channel: Channel;
+  now?: Programme;
+  next?: Programme;
+  favourite: boolean;
+  onPlay: (channel: Channel) => void;
+  onFavourite: (channel: Channel) => void;
+  onOpenWebsite: (url: string, title: string) => void;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocusTrap(dialogRef, onClose);
+  const availability = useContext(PlaybackAvailabilityContext)[channel.key] || "unverified";
+  const sources = channelSources(channel);
+  const providers = channelProviders(channel);
+  let website = "";
+  try { website = channel.website ? normalizeExternalHttpUrl(channel.website) : ""; }
+  catch { website = ""; }
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+    <section ref={dialogRef} className="channel-details" role="dialog" aria-modal="true" aria-labelledby="channel-details-title">
+      <button type="button" className="dialog-close" aria-label="Close channel details" onClick={onClose}><X /></button>
+      <div className="channel-details-hero">
+        <div className="channel-details-logo">{channel.logo ? <img src={channel.logo} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; }} /> : <img src={BRAND_ICON} alt="" />}</div>
+        <div>
+          <span className="overline"><Broadcast weight="fill" /> {availabilityLabel(availability)} · {countryName(channel.country)}</span>
+          <h2 id="channel-details-title">{now?.title || channel.name}</h2>
+          <p>{channel.name}{now?.description ? ` · ${now.description}` : ""}</p>
+          {next && <div className="detail-next"><Clock /><span><small>UP NEXT · {formatTime(new Date(next.start))}</small><strong>{next.title}</strong></span></div>}
+        </div>
+      </div>
+      <div className="channel-details-grid">
+        <DetailItem label="Channel ID" value={channel.id} />
+        <DetailItem label="Feed" value={`${channel.feed || "Main feed"}${channel.isMain ? " · primary" : ""}`} />
+        <DetailItem label="Network" value={channel.network} />
+        <DetailItem label="Owners" value={(channel.owners || []).join(" · ")} />
+        <DetailItem label="Alternate names" value={(channel.altNames || []).join(" · ")} />
+        <DetailItem label="Categories" value={channel.categories.map(titleCase).join(" · ")} />
+        <DetailItem label="Languages" value={channel.languages.join(" · ")} />
+        <DetailItem label="Broadcast areas" value={channel.broadcastArea.join(" · ")} />
+        <DetailItem label="Timezones" value={(channel.timezones || []).join(" · ")} />
+        <DetailItem label="Format" value={channel.format || channelQuality(channel)} />
+        <DetailItem label="Launched" value={channel.launched} />
+        <DetailItem label="Replacement" value={channel.replacedBy} />
+        <DetailItem label="Source providers" value={providers.join(" · ")} />
+      </div>
+      <section className="channel-source-list" aria-label={`${channel.name} playback source metadata`}>
+        <div><h3>Playback sources</h3><span>{sources.length.toLocaleString()} preserved routes before browser delivery fallbacks</span></div>
+        {sources.map((source, index) => <article key={sourceIdentifier(source, index)}>
+          <span><strong>{source.provenance || source.title || source.label || `Source ${index + 1}`}</strong><small>{sourceHostname(source)}</small></span>
+          <div>{source.quality && <b>{source.quality}</b>}<b>{(source.transport || source.transportHint || "unknown").toUpperCase()}</b><b>{source.url.startsWith("https://") ? "HTTPS" : "HTTP"}</b>{source.requiresHeaders && <b>Provider headers</b>}</div>
+        </article>)}
+      </section>
+      <div className="channel-details-actions">
+        <button className="primary" onClick={() => onPlay(channel)}><Play weight="fill" /> Watch live</button>
+        <button className="secondary" onClick={() => onFavourite(channel)}><Heart weight={favourite ? "fill" : "regular"} /> {favourite ? "Remove from My List" : "Add to My List"}</button>
+        {website && <button className="secondary" onClick={() => onOpenWebsite(website, channel.name)}><ArrowSquareOut /> Channel website</button>}
+      </div>
+    </section>
+  </div>;
 }
 
 function Player({
@@ -1364,39 +1549,7 @@ function Player({
 
 function SourceDialog({ sourceUrl, setSourceUrl, epgUrl, setEpgUrl, loading, onClose, onPlaylistUrl, onPlaylistFile, onEpgUrl, onEpgFile }: { sourceUrl: string; setSourceUrl: (value: string) => void; epgUrl: string; setEpgUrl: (value: string) => void; loading: boolean; onClose: () => void; onPlaylistUrl: () => void; onPlaylistFile: (file: File) => void; onEpgUrl: () => void; onEpgFile: (file: File) => void }) {
   const dialogRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    const focusable = () => [...(dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
-    ) || [])];
-    focusable()[0]?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = focusable();
-      if (!items.length) return;
-      const first = items[0]!;
-      const last = items[items.length - 1]!;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      previous?.focus();
-    };
-  }, [onClose]);
+  useModalFocusTrap(dialogRef, onClose);
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
     <section ref={dialogRef} className="source-dialog" role="dialog" aria-modal="true" aria-labelledby="source-dialog-title">
       <button type="button" className="dialog-close" aria-label="Close source dialog" onClick={onClose}><X /></button>

@@ -16,6 +16,7 @@ import type {
   WebCatalog,
   WebChannel,
 } from "./webCatalog";
+import { MAIN_FEED_OPTION_ID } from "./webCatalog";
 import { XmltvStreamParser } from "../relay/src/xmltv";
 
 export const MAX_PERSONAL_PLAYLIST_ENTRIES = 50_000;
@@ -453,6 +454,29 @@ export function mergePersonalPlaylistIntoCatalog(
       catalog.timezones,
       optionCounts(added, (channel) => channel.timezones || []),
       (id) => id.replace(/_/g, " "),
+    ),
+    owners: bumpNamedOptions(
+      catalog.owners,
+      optionCounts(added, (channel) => channel.owners || []),
+      (id) => id,
+    ),
+    networks: bumpNamedOptions(
+      catalog.networks,
+      optionCounts(added, (channel) => channel.network ? [channel.network] : []),
+      (id) => id,
+    ),
+    feeds: bumpNamedOptions(
+      catalog.feeds,
+      optionCounts(added, (channel) => [channel.feed || MAIN_FEED_OPTION_ID]),
+      (id) => id === MAIN_FEED_OPTION_ID ? "Main feed" : id,
+    ),
+    providers: bumpNamedOptions(
+      catalog.providers,
+      optionCounts(added, (channel) => [
+        ...(channel.provenance || []),
+        ...channel.sources.map((source) => source.provenance || "").filter(Boolean),
+      ]),
+      (id) => id,
     ),
     updatedAt: new Date().toISOString(),
     source: catalog.source.toLowerCase().includes(label)
