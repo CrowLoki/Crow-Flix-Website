@@ -73,9 +73,10 @@ preserves redirected HLS, DASH child requests, and byte-range media.
 
 The catalogue distinguishes recently played `LIVE` routes, bounded-preflight
 `READY` routes, unverified entries, part-time sources, regional sources, and
-temporarily failed entries. CrowFlix checks only a small set of currently
-relevant channels with at most three concurrent requests, caches each result
-for 15 minutes, and reads no more than the manifest plus the key,
+temporarily failed entries. On Live TV, CrowFlix checks one best route for each
+channel on the current 48-card page; Home, Guide, and My List retain a smaller
+12-channel/deeper-route window. Every queue uses at most three concurrent
+requests, caches each result for 15 minutes, and reads no more than the manifest plus the key,
 initialization data, and first media bytes needed to prove that a route starts.
 Live and ready routes rank first, while every matching regional, part-time,
 offline, and unverified catalogue entry remains visible and reachable. The Live

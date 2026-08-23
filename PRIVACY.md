@@ -65,9 +65,11 @@ External providers apply their own availability, geographic, account, storage,
 and privacy rules. Crow-Flix does not bypass those restrictions.
 
 The readiness check uses at most three concurrent requests and caches a route
-result for 15 minutes. It reads only bounded manifest data and the key,
-initialization data, or first media bytes needed to determine whether playback
-can start. It does not play or download a complete programme in the background.
+result for 15 minutes. Live TV checks one preferred route for each channel on
+the currently visible 48-card page; other views use a smaller window. It reads
+only bounded manifest data and the key, initialization data, or first media
+bytes needed to determine whether playback can start. It does not play or
+download a complete programme in the background.
 
 The optional health index is downloaded as a bounded compressed static file.
 CrowFlix does not send searches, favourites, recent channels, Web Library data,

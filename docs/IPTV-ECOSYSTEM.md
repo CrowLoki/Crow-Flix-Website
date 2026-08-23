@@ -82,6 +82,10 @@ dimensions, and all imported routes retain personal-source provenance.
 
 Live TV always contains the complete matching result set. `Working first` and
 `A–Z` change order only. Health or availability never silently removes entries.
+The bounded readiness queue follows the actual 48-card Live TV page: one best
+route per visible channel, at most three concurrent requests, cached for 15
+minutes. Changing pages changes the check window; health-driven reordering does
+not recursively chase through or shrink the catalogue.
 
 ## Programme guide pipeline
 
