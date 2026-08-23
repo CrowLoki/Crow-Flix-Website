@@ -57,12 +57,22 @@ export type PlaybackControllerState = {
   sourceNumber: number;
   sourceTotal: number;
   canNext: boolean;
+  sourceOptions: PlaybackSourceOption[];
   diagnostics: PlaybackDiagnostic[];
+};
+
+export type PlaybackSourceOption = {
+  index: number;
+  sourceId: string;
+  label: string;
+  detail: string;
+  active: boolean;
 };
 
 export type PlaybackController = PlaybackControllerState & {
   retry: () => void;
   next: () => void;
+  selectSource: (index: number) => void;
   resume: () => void;
 };
 
@@ -73,6 +83,7 @@ const IDLE_STATE: PlaybackControllerState = {
   sourceNumber: 0,
   sourceTotal: 0,
   canNext: false,
+  sourceOptions: [],
   diagnostics: [],
 };
 
@@ -104,6 +115,7 @@ export function usePlaybackController(
     ...state,
     retry: useCallback(() => runRef.current?.retry(), []),
     next: useCallback(() => runRef.current?.next(), []),
+    selectSource: useCallback((index: number) => runRef.current?.select(index), []),
     resume: useCallback(() => runRef.current?.resume(), []),
   };
 }
@@ -151,6 +163,17 @@ export class PlaybackRun {
     this.reorderRemainingSources();
     if (this.cursor + 1 >= this.orderedSources.length) return;
     this.startAttempt(this.cursor + 1, "switching");
+  }
+
+  select(index: number): void {
+    if (
+      this.disposed
+      || !Number.isInteger(index)
+      || index < 0
+      || index >= this.orderedSources.length
+      || index === this.cursor
+    ) return;
+    this.startAttempt(index, "switching");
   }
 
   resume(): void {
@@ -576,6 +599,20 @@ export class PlaybackRun {
       sourceNumber: source ? this.cursor + 1 : 0,
       sourceTotal: this.orderedSources.length,
       canNext: this.cursor + 1 < this.orderedSources.length,
+      sourceOptions: this.orderedSources.map((option, index) => ({
+        index,
+        sourceId: sourceIdentifier(option, index),
+        label: option.provenance
+          || option.title
+          || option.label
+          || `Source ${index + 1}`,
+        detail: [
+          option.delivery === "relay" ? "Relay" : "Direct",
+          option.quality || null,
+          classifySource(option).toUpperCase(),
+        ].filter(Boolean).join(" · "),
+        active: index === this.cursor,
+      })),
       diagnostics: this.diagnostics,
     });
   }

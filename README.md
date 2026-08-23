@@ -86,7 +86,10 @@ Opening a multi-source channel starts a three-way bounded check across its
 current preferred source, its best HTTPS option, and an unverified alternative.
 As those checks finish, CrowFlix reorders only the routes it has not tried yet,
 so a newly proven route can jump ahead without restarting or replaying a failed
-attempt. Remaining checks stop as soon as one route proves ready.
+attempt. Remaining checks stop as soon as one route proves ready. The route
+indicator in the player opens a complete source chooser, where any preserved
+feed and its direct or relay delivery route can be selected explicitly without
+exposing provider URLs, credentials, or request headers.
 
 Because IPTV-org no longer publishes stream-status fields, the browser also
 uses the free, MIT-licensed

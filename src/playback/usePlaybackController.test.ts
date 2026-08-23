@@ -169,6 +169,79 @@ describe("PlaybackRun retry", () => {
     run.dispose();
   });
 
+  it("publishes safe source choices and switches to the selected route", () => {
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    const updates: PlaybackControllerState[] = [];
+    const video = {
+      currentTime: 0,
+      ended: false,
+      addEventListener: vi.fn(),
+      load: vi.fn(),
+      pause: vi.fn(),
+      play: vi.fn(async () => undefined),
+      removeAttribute: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLVideoElement;
+    const run = new PlaybackRun({
+      key: "source-chooser",
+      name: "Source Chooser",
+      sources: [
+        {
+          id: "primary-route",
+          url: "https://private-provider.test/live.m3u8?token=hidden",
+          delivery: "relay",
+          provenance: "IPTV-org",
+          quality: "1080p",
+          preferenceScore: 100,
+        },
+        {
+          id: "backup-route",
+          url: "https://backup-provider.test/live.m3u8?token=hidden-too",
+          delivery: "direct",
+          title: "Provider backup",
+          preferenceScore: 90,
+        },
+      ],
+    }, video, (state) => updates.push(state));
+
+    run.start();
+    const initial = updates[updates.length - 1];
+    expect(initial?.sourceOptions).toHaveLength(2);
+    expect(initial?.sourceOptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceId: "primary-route",
+        label: "IPTV-org",
+        detail: "Relay · 1080p · HLS",
+      }),
+      expect.objectContaining({
+        sourceId: "backup-route",
+        label: "Provider backup",
+        detail: "Direct · HLS",
+      }),
+    ]));
+    expect(JSON.stringify(initial?.sourceOptions)).not.toContain("provider.test");
+    expect(JSON.stringify(initial?.sourceOptions)).not.toContain("token=");
+
+    const target = initial?.sourceOptions.find((option) => !option.active);
+    expect(target).toBeDefined();
+    const updateCount = updates.length;
+    run.select(target?.index ?? -1);
+    expect(updates).toHaveLength(updateCount + 1);
+    expect(updates[updates.length - 1]).toMatchObject({
+      status: "switching",
+      source: { id: target?.sourceId },
+      sourceNumber: (target?.index ?? 0) + 1,
+    });
+
+    const selectedUpdateCount = updates.length;
+    run.select(target?.index ?? -1);
+    run.select(-1);
+    run.select(99);
+    expect(updates).toHaveLength(selectedUpdateCount);
+    run.dispose();
+  });
+
   it("moves a newly READY untried route directly behind a failed route", async () => {
     const storage = memoryStorage();
     vi.stubGlobal("localStorage", storage);

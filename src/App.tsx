@@ -1144,8 +1144,9 @@ function Player({
   const latestDiagnostic = playback.diagnostics[playback.diagnostics.length - 1];
   const busy = playback.status === "loading" || playback.status === "switching";
   const [chromeVisible, setChromeVisible] = useState(true);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const chromeTimer = useRef<number | undefined>(undefined);
-  const interactive = busy || playback.status === "failed" || playback.status === "interaction-required";
+  const interactive = sourcesOpen || busy || playback.status === "failed" || playback.status === "interaction-required";
   const wake = useCallback(() => {
     setChromeVisible(true);
     window.clearTimeout(chromeTimer.current);
@@ -1161,6 +1162,7 @@ function Player({
       window.clearTimeout(chromeTimer.current);
     };
   }, [wake]);
+  useEffect(() => setSourcesOpen(false), [channel.key]);
   useEffect(() => {
     if (interactive || zapNotice) {
       setChromeVisible(true);
@@ -1183,14 +1185,26 @@ function Player({
     <div className="player-shade" />
     <div className="player-top">
       <button onClick={onClose}><CaretLeft /> Back to CrowFlix</button>
-      <div className="player-source-state" aria-live="polite">
+      <button
+        className="player-source-state"
+        aria-live="polite"
+        aria-expanded={sourcesOpen}
+        aria-controls="playback-source-options"
+        disabled={playback.sourceOptions.length === 0}
+        title="Choose a playback source"
+        onClick={() => setSourcesOpen((open) => !open)}
+      >
         {playback.sourceTotal > 0 && <span>Route {playback.sourceNumber}/{playback.sourceTotal}</span>}
         <i className={playback.status === "playing" ? "online" : ""} />
         {playback.status === "playing" ? "Live" : titleCase(playback.status)}
-      </div>
+      </button>
       {playback.canNext && <button className="player-next-source" onClick={playback.next} title="Try the next playback route">Next route <CaretRight /></button>}
       <div className="player-brand"><img src={BRAND_ICON} alt="" />CROW<strong>FLIX</strong></div>
     </div>
+    {sourcesOpen && playback.sourceOptions.length > 0 && <section id="playback-source-options" className="source-chooser" aria-label="Playback sources">
+      <div><strong>Playback sources</strong><span>Choose any preserved feed or delivery route.</span></div>
+      <div className="source-options">{playback.sourceOptions.map((option) => <button key={`${option.sourceId}-${option.index}`} className={option.active ? "active" : ""} onClick={() => { playback.selectSource(option.index); setSourcesOpen(false); }}><span><strong>{option.label}</strong><small>{option.detail}</small></span><b>{option.active ? "NOW" : `TRY ${option.index + 1}`}</b></button>)}</div>
+    </section>}
     {zapNotice && <div className="zap-osd" role="status">{zapNotice}</div>}
     <div className="player-keys" aria-hidden="true">↑↓ Channel · 0-9 Direct · L Last · Esc Close</div>
     <div className="player-info">

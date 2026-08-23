@@ -86,7 +86,7 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "preflightSource", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 
@@ -96,7 +96,7 @@ for (const value of ["browserPreflightRoutes", "runPreflightQueue", "verifyHlsMe
 }
 
 const playbackController = await readFile(path.join(repositoryRoot, "src", "playback", "usePlaybackController.ts"), "utf8");
-for (const value of ['import("hls.js")', 'import("dashjs")', "reorderRemainingSources", "orderSourcesByPreflight", "Trying the next playback route"]) {
+for (const value of ['import("hls.js")', 'import("dashjs")', "reorderRemainingSources", "orderSourcesByPreflight", "sourceOptions", "selectSource", "Trying the next playback route"]) {
   assert(playbackController.includes(value), `Dynamic playback failover is missing: ${value}`);
 }
 assert(!/^import Hls from "hls\.js";/m.test(playbackController), "HLS.js is still bundled into initial page startup");
