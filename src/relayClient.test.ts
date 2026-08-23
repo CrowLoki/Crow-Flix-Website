@@ -21,9 +21,21 @@ describe("loadRelayGuide", () => {
       updatedAt: "2026-08-23T00:00:00Z",
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
-    await loadRelayGuide("AU", ["ABC.au"], "turnstile-token");
+    await loadRelayGuide(
+      "AU",
+      [{ id: "ABC.au", names: ["ABC"] }],
+      "turnstile-token",
+      "Australia/Brisbane",
+    );
     const [url, init] = fetcher.mock.calls[0] ?? [];
     expect(String(url)).not.toContain("turnstile-token");
+    expect(String(url)).toBe(`${RELAY_BASE}/epg`);
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      country: "AU",
+      timeZone: "Australia/Brisbane",
+      channels: [{ id: "ABC.au", names: ["ABC"] }],
+    });
     expect(init?.cache).toBe("no-store");
     expect(new Headers(init?.headers).get("X-Turnstile-Token")).toBe("turnstile-token");
   });
@@ -32,7 +44,7 @@ describe("loadRelayGuide", () => {
     vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ error: "Complete browser verification." }), { status: 403 }),
     ));
-    await expect(loadRelayGuide("AU", ["ABC.au"], "bad-token"))
+    await expect(loadRelayGuide("AU", [{ id: "ABC.au", names: ["ABC"] }], "bad-token"))
       .rejects.toMatchObject({ status: 403 });
   });
 });

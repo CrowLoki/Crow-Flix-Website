@@ -43,6 +43,10 @@ Depending on the feature used, the website can connect to:
 
 - Cloudflare Pages, which serves the website;
 - IPTV-org catalogue and metadata endpoints;
+- timezone-appropriate `i.mjh.nz` programme-guide files for Australian guide
+  requests;
+- bounded public `i.mjh.nz` Australian, New Zealand, and world playlists used
+  to add regional/provider alternatives and genuinely absent channels;
 - the static IPTV Nexus stream-health index, used only as an optional fresh
   hint for exact IPTV-org source identities;
 - channel-logo and artwork hosts;
@@ -76,7 +80,8 @@ requests can include:
 
 - the visitor IP address and request time;
 - the requested relay route;
-- guide country and channel identifiers;
+- guide country, browser timezone, channel identifiers, and public channel names
+  needed to match provider XMLTV identifiers;
 - media target information;
 - provider-requested User-Agent or Referer values where required; and
 - ordinary HTTP headers supplied by Cloudflare and the browser.

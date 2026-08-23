@@ -31,6 +31,8 @@ The recovered browser source now lives here so the public website and desktop
 application can be maintained as separate projects.
 
 Machine-readable recovery evidence is preserved in `RECOVERY-PROVENANCE.json`.
+The complete upstream catalogue/guide integration contract is documented in
+[`docs/IPTV-ECOSYSTEM.md`](docs/IPTV-ECOSYSTEM.md).
 
 ## Local verification
 
@@ -75,9 +77,10 @@ temporarily failed entries. CrowFlix checks only a small set of currently
 relevant channels with at most three concurrent requests, caches each result
 for 15 minutes, and reads no more than the manifest plus the key,
 initialization data, and first media bytes needed to prove that a route starts.
-Live and ready routes rank first, and the default browser view keeps clearly
-limited or failed entries out of the way without deleting them from the full
-catalogue.
+Live and ready routes rank first, while every matching regional, part-time,
+offline, and unverified catalogue entry remains visible and reachable. The Live
+TV order can switch between working-first and alphabetical without removing a
+channel from the result set.
 
 Opening a multi-source channel starts a three-way bounded check across its
 current preferred source, its best HTTPS option, and an unverified alternative.
@@ -91,7 +94,7 @@ uses the free, MIT-licensed
 optional whole-catalogue hint. CrowFlix accepts only fresh records that match an existing IPTV-org URL,
 Referer, and User-Agent exactly; it never imports an unknown URL from the index.
 An `online` hint improves source order, while a recent `offline`, `timeout`, or
-`error` result keeps a dead-only channel out of the default view. A local
+`error` result marks and ranks a dead-only channel lower without removing it. A local
 CrowFlix preflight or successful playback always takes priority, and failure of
 the optional index leaves the normal catalogue path working.
 
@@ -100,11 +103,28 @@ receive the same browser-ranking boost as a hostname-based source. Those feeds
 often work from the scanner's network while rejecting the Cloudflare relay an
 HTTPS browser needs, so CrowFlix waits for local evidence before promoting them.
 
+The catalogue is additive. In addition to every current non-blocklisted
+IPTV-org stream, CrowFlix loads bounded timezone-appropriate Australian, New
+Zealand, and world provider playlists through the relay. Exact mapped channels
+gain alternate sources; genuinely absent channels are retained as new entries
+with their public playlist provenance, headers, logo, broadcast area, and
+timezone. Failure of an optional playlist never replaces the base catalogue.
+Individually media-verified public fallbacks may also be attached to an exact
+channel ID with a clear feed label and provenance; the original sources remain.
+
 Live programme-guide requests use Cloudflare Turnstile in Managed mode. The
 browser obtains a one-time `epg_load` token, and the relay validates it through
 Siteverify with exact action and hostname checks before performing guide
 downloads and XML parsing. Catalogue browsing and video playback remain
 unchallenged. Crow-Flix has no payment or Stripe integration.
+
+After verification, the relay uses full IPTV-org guide mappings first, then a
+timezone-specific Australian regional guide when applicable, followed by the
+larger country fallback. XMLTV is decompressed and parsed as a bounded stream;
+only programmes matching requested channels are retained in memory.
+Guide requests use bounded POST bodies rather than placing large country
+catalogues in a URL. Authoritative and alternate channel names are used only
+for exact, unambiguous XMLTV display-name matching.
 
 ## Content and availability
 

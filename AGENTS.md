@@ -49,6 +49,13 @@
 - Turnstile protects guide retrieval only. Do not gate ordinary catalogue
   browsing, favourites, Web Library edits, or video playback, and do not add
   payment or Stripe flows.
+- Guide resolution must preserve full IPTV-org metadata and timezone-aware
+  regional mappings. Australian requests use the fixed city guide table before
+  the larger EPGShare fallback; both paths remain bounded streaming parses.
+- Catalogue expansion is additive: preserve all non-blocklisted IPTV-org
+  streams, then merge fixed bounded regional/provider playlists with exact
+  URL/header deduplication and provenance. Never replace or hide the base
+  catalogue because an optional source fails.
 
 ## Repository rules
 

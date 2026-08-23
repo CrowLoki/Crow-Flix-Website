@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalCountryCode,
   channelMatchesCountry,
+  channelMatchesCity,
   channelMatchesRegion,
+  channelMatchesSubdivision,
+  channelMatchesTimezone,
   type BroadcastAreaChannel,
   type BroadcastRegion,
 } from "./broadcastArea";
@@ -24,6 +27,27 @@ describe("canonicalCountryCode", () => {
   it("uses IPTV-org's UK code while accepting the locale GB alias", () => {
     expect(canonicalCountryCode("gb")).toBe("UK");
     expect(canonicalCountryCode("UK")).toBe("UK");
+  });
+});
+
+describe("precise broadcast dimensions", () => {
+  const detailed: BroadcastAreaChannel = {
+    country: "AU",
+    broadcastArea: ["s/AU-QLD", "ct/AUBNE"],
+    timezones: ["Australia/Brisbane"],
+  };
+
+  it("matches exact subdivisions without treating every country feed as local", () => {
+    expect(channelMatchesSubdivision(detailed, "au-qld")).toBe(true);
+    expect(channelMatchesSubdivision(detailed, "AU-NSW")).toBe(false);
+    expect(channelMatchesSubdivision(channel(["c/AU"]), "AU-QLD")).toBe(false);
+  });
+
+  it("matches exact cities and timezones", () => {
+    expect(channelMatchesCity(detailed, "aubne")).toBe(true);
+    expect(channelMatchesCity(detailed, "AUSYD")).toBe(false);
+    expect(channelMatchesTimezone(detailed, "australia/brisbane")).toBe(true);
+    expect(channelMatchesTimezone(detailed, "Australia/Sydney")).toBe(false);
   });
 });
 

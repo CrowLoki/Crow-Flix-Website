@@ -37,20 +37,30 @@ export type RelayGuideResult = {
   updatedAt: string;
 };
 
+export type RelayGuideChannel = {
+  id: string;
+  names: string[];
+};
+
 const REQUEST_TIMEOUT_MS = 90_000;
 
 export async function loadRelayGuide(
   country: string,
-  channelIds: string[],
+  channels: RelayGuideChannel[],
   turnstileToken: string,
+  timeZone = "",
 ): Promise<RelayGuideResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const query = new URLSearchParams({ country, ids: channelIds.join(",") });
-    const response = await fetch(`${RELAY_BASE}/epg?${query}`, {
+    const response = await fetch(`${RELAY_BASE}/epg`, {
+      method: "POST",
       cache: "no-store",
-      headers: { "X-Turnstile-Token": turnstileToken },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Turnstile-Token": turnstileToken,
+      },
+      body: JSON.stringify({ country, timeZone, channels }),
       signal: controller.signal,
     });
     const body = await response.json() as RelayGuideResult & { error?: string };

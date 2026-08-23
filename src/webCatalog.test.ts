@@ -3,12 +3,14 @@ import {
   ANI_ONE_CURRENT_URL,
   ANI_ONE_DEAD_URL,
   OPTIONAL_FAST_PLAYLISTS,
+  VERIFIED_PUBLIC_FALLBACKS,
   applyStreamHealthHints,
   amagiFallbackTitleMatches,
   amagiProviderChannelIdentity,
   buildCatalogFromApi,
   loadOptionalFastFallbacks,
   normalizeAndGroupChannels,
+  overlayAdditivePlaylists,
   overlayAmagiFastFallbacks,
   parseOptionalFastPlaylist,
   qualityHeight,
@@ -17,6 +19,7 @@ import {
   type WebChannel,
 } from "./webCatalog";
 import { streamHealthIdentity } from "./streamHealthIndex";
+import { additivePlaylistConfigs, parseAdditivePlaylist } from "./additivePlaylists";
 
 function payload(overrides: Partial<ApiPayload> = {}): ApiPayload {
   return {
@@ -28,6 +31,9 @@ function payload(overrides: Partial<ApiPayload> = {}): ApiPayload {
     languages: [],
     countries: [],
     regions: [],
+    subdivisions: [],
+    cities: [],
+    timezones: [],
     blocklist: [],
     ...overrides,
   };
@@ -48,14 +54,17 @@ describe("qualityHeight", () => {
 describe("buildCatalogFromApi", () => {
   it("joins streams onto channels with feed metadata and logos", () => {
     const catalog = buildCatalogFromApi(payload({
-      channels: [{ id: "News.us", name: "Crow News", country: "US", categories: ["news"], network: "CrowNet", website: "https://example.com" }],
-      feeds: [{ channel: "News.us", id: "main", name: "Crow News", is_main: true, broadcast_area: ["c/US"], languages: ["eng"], format: "1080p" }],
-      logos: [{ channel: "News.us", feed: null, in_use: true, url: "https://example.com/logo.png" }],
+      channels: [{ id: "News.us", name: "Crow News", alt_names: ["Crow Network News"], owners: ["Crow"], country: "US", categories: ["news"], is_nsfw: false, launched: "2026-01-01", replaced_by: "FutureNews.us", network: "CrowNet", website: "https://example.com" }],
+      feeds: [{ channel: "News.us", id: "main", name: "Crow News", alt_names: ["West Feed"], is_main: true, broadcast_area: ["s/US-CA", "ct/USLAX"], timezones: ["America/Los_Angeles"], languages: ["eng"], format: "1080p" }],
+      logos: [{ channel: "News.us", feed: null, in_use: true, tags: ["horizontal"], width: 1200, height: 400, format: "SVG", url: "https://example.com/logo.png" }],
       streams: [{ channel: "News.us", feed: null, title: "Crow News", url: "https://cdn.example.com/news.m3u8", quality: "1080p" }],
       categories: [{ id: "news", name: "News", description: "News channels" }],
       languages: [{ code: "eng", name: "English" }],
       countries: [{ name: "United States", code: "US", languages: ["eng"], flag: "🇺🇸" }],
       regions: [{ code: "AMER", name: "Americas", countries: ["US"] }],
+      subdivisions: [{ country: "US", code: "US-CA", name: "California" }],
+      cities: [{ country: "US", subdivision: "US-CA", code: "USLAX", name: "Los Angeles", wikidata_id: "Q65" }],
+      timezones: [{ id: "America/Los_Angeles", utc_offset: "UTC-08:00", countries: ["US"] }],
     }));
     expect(catalog.channels).toHaveLength(1);
     const channel = catalog.channels[0];
@@ -63,13 +72,21 @@ describe("buildCatalogFromApi", () => {
     expect(channel.name).toBe("Crow News");
     expect(channel.logo).toBe("https://example.com/logo.png");
     expect(channel.languages).toEqual(["English"]);
-    expect(channel.broadcastArea).toEqual(["c/US"]);
+    expect(channel.broadcastArea).toEqual(["s/US-CA", "ct/USLAX"]);
+    expect(channel.altNames).toEqual(["Crow Network News", "West Feed"]);
+    expect(channel.owners).toEqual(["Crow"]);
+    expect(channel.timezones).toEqual(["America/Los_Angeles"]);
+    expect(channel.launched).toBe("2026-01-01");
+    expect(channel.replacedBy).toBe("FutureNews.us");
     expect(channel.sources[0].transport).toBe("hls");
     expect(channel.sources[0].isHttps).toBe(true);
     expect(catalog.categories[0]).toMatchObject({ id: "news", count: 1 });
     expect(catalog.countries[0]).toMatchObject({ code: "US", count: 1 });
     expect(catalog.regions[0]).toMatchObject({ code: "AMER", count: 1 });
     expect(catalog.languages[0]).toMatchObject({ name: "English", count: 1 });
+    expect(catalog.subdivisions[0]).toMatchObject({ id: "US-CA", count: 1 });
+    expect(catalog.cities[0]).toMatchObject({ id: "USLAX", count: 1 });
+    expect(catalog.timezones[0]).toMatchObject({ id: "America/Los_Angeles", count: 1 });
   });
 
   it("excludes blocklisted and closed channels but keeps unknown channel ids", () => {
@@ -229,6 +246,61 @@ describe("normalizeAndGroupChannels", () => {
     const grouped = normalizeAndGroupChannels(channels);
     expect(grouped.map((channel) => channel.name)).toEqual(["Alpha", "Zed"]);
     expect(grouped[1].key).toBe("Zed.us@HD");
+  });
+});
+
+describe("additive regional/provider playlists", () => {
+  it("adds mapped alternatives and preserves genuinely new channels with provenance", () => {
+    const catalog = buildCatalogFromApi(payload({
+      channels: [{ id: "Channel7.au", name: "Channel 7", country: "AU" }],
+      feeds: [{ channel: "Channel7.au", id: "QLD", name: "Queensland", is_main: true, broadcast_area: ["s/AU-QLD"], timezones: ["Australia/Brisbane"] }],
+      streams: [{ channel: "Channel7.au", feed: "QLD", title: "Channel 7", url: "https://existing.test/seven.m3u8" }],
+    }));
+    const config = additivePlaylistConfigs("Australia/Brisbane")[0]!;
+    const entries = parseAdditivePlaylist([
+      "#EXTM3U",
+      '#EXTINF:-1 tvg-id="mjh-seven-bri" tvg-logo="https://img.test/seven.png",Seven',
+      "#EXTVLCOPT:http-user-agent=Provider UA",
+      "https://provider.test/seven.m3u8",
+      '#EXTINF:-1 tvg-id="mjh-new-channel" tvg-logo="https://img.test/new.png",New Brisbane Channel',
+      "https://provider.test/new.m3u8",
+    ].join("\n"), config);
+
+    const result = overlayAdditivePlaylists(catalog.channels, entries);
+
+    expect(result).toEqual({ addedSources: 2, addedChannels: 1 });
+    const seven = catalog.channels.find((channel) => channel.id === "Channel7.au")!;
+    expect(seven.sources.map((source) => source.url)).toContain(
+      "https://provider.test/seven.m3u8",
+    );
+    expect(seven.provenance).toContain(config.name);
+    const added = catalog.channels.find((channel) => channel.name === "New Brisbane Channel")!;
+    expect(added).toMatchObject({
+      country: "AU",
+      broadcastArea: ["s/AU-QLD"],
+      timezones: ["Australia/Brisbane"],
+      network: "i.mjh.nz",
+      provenance: [config.name],
+    });
+    expect(added.sources[0]).toMatchObject({ provenance: config.name });
+  });
+
+  it("keeps a verified public alternate alongside the existing TV Brasil feeds", () => {
+    const catalog = buildCatalogFromApi(payload({
+      channels: [{ id: "TVBrasil.br", name: "TV Brasil", country: "BR" }],
+      streams: [{ channel: "TVBrasil.br", title: "TV Brasil", url: "http://45.0.0.1/TVBRASIL/index.m3u8" }],
+    }));
+    const channel = catalog.channels[0];
+    const fallback = VERIFIED_PUBLIC_FALLBACKS[0];
+
+    expect(channel.sources.map((source) => source.url)).toEqual(
+      expect.arrayContaining(["http://45.0.0.1/TVBRASIL/index.m3u8", fallback.url]),
+    );
+    expect(channel.sources.find((source) => source.url === fallback.url)).toMatchObject({
+      label: "International feed",
+      provenance: fallback.provenance,
+    });
+    expect(channel.provenance).toContain(fallback.provenance);
   });
 });
 

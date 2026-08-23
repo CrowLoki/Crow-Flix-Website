@@ -57,22 +57,31 @@ Only `GET` is accepted.
 { "ok": true, "service": "crowflix-relay", "version": "0.1.0" }
 ```
 
-### `GET /epg?country=AU&ids=id1,id2,...`
+### `POST /epg`
+
+The browser sends bounded JSON containing `country`, `timeZone`, and up to
+2,000 `{id, names[]}` channel records. This avoids oversized query strings and
+lets the streaming parser learn exact, unique provider display-name aliases.
+The legacy query-string `GET` form remains supported for compatibility.
 
 Pipeline (mirrors `load_auto_epg` in `src-tauri/src/lib.rs` lines 2180-2237):
 
-1. Fetch `https://iptv-org.github.io/api/guides.json`, verify the shape
-   defensively (array of `{channel?, sources?: [{url}]}`; junk entries are
-   skipped, malformed JSON is treated as "index unavailable").
+1. Stream `https://iptv-org.github.io/api/guides.json`, retaining only objects
+   for requested channel IDs while preserving feed, site, language, display
+   name and source metadata. The 25+ MiB index is never materialized as one
+   in-memory JSON array.
 2. Rank guide source URLs by how many requested channel ids each covers
    (same `source_coverage` counting; stable descending sort).
 3. Try up to **3** ranked sources (the Rust core tries 8; the Worker has
    tighter CPU budgets, so fewer attempts). First source yielding at least
    one matching programme wins.
-4. Fallback: `epg_ripper_{CC}1.xml.gz` from `epgshare01.online` then the
+4. For recognised Australian browser timezones, try the matching bounded
+   `i.mjh.nz/au/{City}/epg.xml.gz` guide and remap its provider ids to exact
+   current CrowFlix channel ids.
+5. Fallback: `epg_ripper_{CC}1.xml.gz` from `epgshare01.online` then the
    `raw.githubusercontent.com/epgshare01` mirror, where `CC` is the `country`
    param uppercased with `GB → UK` aliasing.
-5. Nothing matched → `502 {"error": "No current programme listings matched the CC channels."}`.
+6. Nothing matched → `502 {"error": "No current programme listings matched the CC channels."}`.
 
 XMLTV handling: gzip is detected by magic bytes (`1f 8b`) and inflated with
 `DecompressionStream("gzip")` (when upstream sets `Content-Encoding: gzip`
@@ -157,8 +166,8 @@ multipart and malformed ranges are rejected.
 | Channel ids per `/epg` request           | 2,000   |
 | Ranked guide sources tried               | 3       |
 | Kept programmes per parse                | 50,000  |
-| Decompressed XMLTV per source            | 24 MiB  |
-| guides.json index                        | 16 MiB  |
+| Decompressed XMLTV per source            | 96 MiB  |
+| guides.json index                        | 32 MiB streamed |
 | `/fetch` response                        | 32 MiB  |
 | Rewritten playlist body                  | 4 MiB   |
 | Redirects followed (re-validated)        | 5       |

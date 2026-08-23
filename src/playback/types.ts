@@ -34,6 +34,8 @@ export type StreamSource = {
   logicalUrl?: string;
   /** Recent, exact-identity health hint from the optional static index. */
   catalogHealth?: CatalogSourceHealth;
+  /** Public catalogue/playlist that contributed this exact source. */
+  provenance?: string;
 };
 
 export type CatalogSourceHealthStatus =

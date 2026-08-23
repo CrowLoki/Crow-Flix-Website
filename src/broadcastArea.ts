@@ -1,6 +1,7 @@
 export type BroadcastAreaChannel = {
   broadcastArea?: readonly string[] | null;
   country?: string | null;
+  timezones?: readonly string[] | null;
 };
 
 export type BroadcastRegion = {
@@ -151,4 +152,41 @@ export function channelMatchesRegion(
     }
     return false;
   });
+}
+
+export function channelMatchesSubdivision(
+  channel: BroadcastAreaChannel,
+  subdivisionCode: string,
+): boolean {
+  const target = subdivisionCode.trim().toUpperCase();
+  if (!target) return false;
+  return normalizedAreas(channel).some((area) => {
+    const [kind, value] = area.split("/", 2);
+    return kind?.trim().toLowerCase() === "s"
+      && value?.trim().toUpperCase() === target;
+  });
+}
+
+export function channelMatchesCity(
+  channel: BroadcastAreaChannel,
+  cityCode: string,
+): boolean {
+  const target = cityCode.trim().toUpperCase();
+  if (!target) return false;
+  return normalizedAreas(channel).some((area) => {
+    const [kind, value] = area.split("/", 2);
+    return kind?.trim().toLowerCase() === "ct"
+      && value?.trim().toUpperCase() === target;
+  });
+}
+
+export function channelMatchesTimezone(
+  channel: BroadcastAreaChannel,
+  timezoneId: string,
+): boolean {
+  const target = timezoneId.trim().toLowerCase();
+  if (!target) return false;
+  return (channel.timezones || []).some(
+    (timezone) => timezone.trim().toLowerCase() === target,
+  );
 }

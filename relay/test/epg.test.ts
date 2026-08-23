@@ -2,10 +2,15 @@ import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
   GUIDES_URL,
+  XMLTV_MAX_DECOMPRESSED_BYTES,
+  australianGuideSource,
+  epgSharePrimaryTag,
+  enrichGuideNames,
   loadAutoEpg,
   normalizeCountryCode,
   parseGuidesJson,
   rankGuideSources,
+  streamGuidesJson,
 } from "../src/epg";
 import { RelayError } from "../src/errors";
 import type { FetchLike } from "../src/urls";
@@ -62,6 +67,7 @@ const RIPPER_AU_1 = "https://epgshare01.online/epgshare01/epg_ripper_AU1.xml.gz"
 const RIPPER_AU_2 =
   "https://raw.githubusercontent.com/epgshare01/share01/master/epg_ripper_AU1.xml.gz";
 const RIPPER_UK_1 = "https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz";
+const BRISBANE_GUIDE = "https://i.mjh.nz/au/Brisbane/epg.xml.gz";
 
 describe("parseGuidesJson", () => {
   it("returns [] for invalid JSON and non-arrays", () => {
@@ -82,6 +88,78 @@ describe("parseGuidesJson", () => {
       { channel: undefined, sources: [] },
       { channel: "A", sources: [{ url: "ok" }] },
     ]);
+  });
+
+  it("preserves feed, site, language, display-name, and source metadata", () => {
+    const [guide] = parseGuidesJson(JSON.stringify([{
+      channel: "ABC.ca",
+      feed: "Toronto",
+      site: "provider.test",
+      site_id: "abc-hd",
+      site_name: "ABC Toronto HD",
+      lang: "en",
+      sources: [{ host: "cdn.test", url: "https://cdn.test/guide.xml", format: "XML" }],
+    }]));
+    expect(guide).toEqual({
+      channel: "ABC.ca",
+      feed: "Toronto",
+      site: "provider.test",
+      siteId: "abc-hd",
+      siteName: "ABC Toronto HD",
+      lang: "en",
+      sources: [{ host: "cdn.test", url: "https://cdn.test/guide.xml", format: "XML" }],
+    });
+  });
+
+  it("adds unique provider display names only to their exact requested channel", () => {
+    const names = enrichGuideNames(
+      new Map([["ABC.ca", ["ABC"]]]),
+      parseGuidesJson(JSON.stringify([
+        { channel: "ABC.ca", site_name: "ABC Toronto HD", sources: [] },
+        { channel: "OTHER.ca", site_name: "Other", sources: [] },
+      ])),
+      ["ABC.ca"],
+    );
+    expect(names.get("ABC.ca")).toEqual(["ABC", "ABC Toronto HD"]);
+    expect(names.has("OTHER.ca")).toBe(false);
+  });
+});
+
+describe("streamGuidesJson", () => {
+  it("retains only requested guide objects across tiny chunks", async () => {
+    const payload = JSON.stringify([
+      { channel: "OTHER.us", site_name: "Other", sources: [] },
+      {
+        channel: "ABC.ca",
+        feed: "Toronto",
+        site_name: "ABC {Toronto}",
+        sources: [{ url: "https://guide.test/abc.xml" }],
+      },
+    ]);
+    const bytes = new TextEncoder().encode(payload);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let index = 0; index < bytes.length; index += 7) {
+          controller.enqueue(bytes.subarray(index, index + 7));
+        }
+        controller.close();
+      },
+    });
+
+    const guides = await streamGuidesJson(body, ["ABC.ca"]);
+
+    expect(guides).toEqual([expect.objectContaining({
+      channel: "ABC.ca",
+      feed: "Toronto",
+      siteName: "ABC {Toronto}",
+      sources: [{ url: "https://guide.test/abc.xml" }],
+    })]);
+  });
+
+  it("rejects an index that exceeds its streaming byte budget", async () => {
+    const body = new Response(JSON.stringify([{ channel: "ABC.ca", sources: [] }])).body!;
+    await expect(streamGuidesJson(body, ["ABC.ca"], 8))
+      .rejects.toThrow(/exceeded the relay size limit/);
   });
 });
 
@@ -119,6 +197,42 @@ describe("normalizeCountryCode", () => {
   it("rejects codes unsafe for a URL path", () => {
     expect(() => normalizeCountryCode("A/U")).toThrowError(RelayError);
     expect(() => normalizeCountryCode("../etc")).toThrowError(RelayError);
+  });
+
+  it("uses the provider's current numbered primary tags", () => {
+    expect(epgSharePrimaryTag("US")).toBe("US2");
+    expect(epgSharePrimaryTag("CA")).toBe("CA2");
+    expect(epgSharePrimaryTag("BE")).toBe("BE2");
+    expect(epgSharePrimaryTag("gb")).toBe("UK1");
+    expect(epgSharePrimaryTag("AU")).toBe("AU1");
+  });
+});
+
+describe("Australian regional guide mapping", () => {
+  it("maps current CrowFlix channel IDs to the browser timezone without guessing another city", () => {
+    const source = australianGuideSource([
+      "ABCTV.au",
+      "ABCNews.au",
+      "9Gem.au",
+      "Channel7.au",
+      "SkyThoroughbredCentral.au",
+      "Unmapped.au",
+    ], "Australia/Brisbane");
+
+    expect(source).toMatchObject({ city: "Brisbane", url: BRISBANE_GUIDE });
+    expect(Object.fromEntries(source!.aliases)).toMatchObject({
+      "mjh-abc-qld": "ABCTV.au",
+      "mjh-abc-news": "ABCNews.au",
+      "mjh-gem-qld": "9Gem.au",
+      "mjh-seven-bri": "Channel7.au",
+      "mjh-sky-racing-thoroughbred": "SkyThoroughbredCentral.au",
+    });
+    expect([...source!.aliases.values()]).not.toContain("Unmapped.au");
+    expect(australianGuideSource(["ABCTV.au"], "Europe/London")).toBeNull();
+  });
+
+  it("keeps the broad fallback streaming limit large enough for current regional files", () => {
+    expect(XMLTV_MAX_DECOMPRESSED_BYTES).toBe(96 * 1024 * 1024);
   });
 });
 
@@ -171,6 +285,30 @@ describe("loadAutoEpg", () => {
     });
     const result = await loadAutoEpg("AU", ["ABC1.au"], fetcher);
     expect(result.source).toBe("IPTV-org EPG · https://guides.example/weak.xml");
+  });
+
+  it("loads and remaps the timezone-specific Australian guide before the broad ripper", async () => {
+    const regionalXml = `<tv>
+      <programme start="20260823120000 +0000" stop="20260823130000 +0000" channel="mjh-abc-qld"><title>Queensland News</title></programme>
+      <programme start="20260823130000 +0000" stop="20260823140000 +0000" channel="mjh-gem-qld"><title>Gem Programme</title></programme>
+    </tv>`;
+    const { calls, fetcher } = makeFetcher({
+      [GUIDES_URL]: () => new Response("unavailable", { status: 503 }),
+      [BRISBANE_GUIDE]: () => new Response(gzipSync(regionalXml), { status: 200 }),
+    });
+
+    const result = await loadAutoEpg(
+      "AU",
+      ["ABCTV.au", "9Gem.au"],
+      fetcher,
+      "Australia/Brisbane",
+    );
+
+    expect(result.source).toBe("Australian Brisbane guide");
+    expect(result.matchedChannels).toBe(2);
+    expect(result.programmes.map((programme) => programme.channelId))
+      .toEqual(["ABCTV.au", "9Gem.au"]);
+    expect(calls).toEqual([GUIDES_URL, BRISBANE_GUIDE]);
   });
 
   it("tries at most 3 ranked sources before falling back", async () => {

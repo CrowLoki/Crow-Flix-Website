@@ -18,6 +18,7 @@ const SERVICE_VERSION = "0.1.0";
 const FETCH_MAX_BYTES = 32 * 1024 * 1024;
 /** HLS playlist cap; media segments stream through unbounded. */
 const PLAYLIST_MAX_BYTES = 4 * 1024 * 1024;
+const GUIDE_REQUEST_MAX_BYTES = 256 * 1024;
 const FETCH_TIMEOUT_MS = 30_000;
 /** Covers upstream connection/headers and the first body byte, not playback. */
 const STREAM_FIRST_BYTE_TIMEOUT_MS = 8_000;
@@ -29,7 +30,7 @@ const RELAY_UA = "crowflix-relay/0.1.0";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "*",
   "Access-Control-Expose-Headers":
     "Content-Length, Content-Range, Accept-Ranges",
@@ -126,9 +127,53 @@ async function handleEpg(
   env: TurnstileEnvironment,
 ): Promise<Response> {
   await verifyTurnstile(request, env);
-  const country = url.searchParams.get("country") ?? "";
-  const idsParam = url.searchParams.get("ids") ?? "";
-  const result = await loadAutoEpg(country, idsParam.split(","));
+  let country = url.searchParams.get("country") ?? "";
+  let channelIds = (url.searchParams.get("ids") ?? "").split(",");
+  let timeZone = url.searchParams.get("tz") ?? "";
+  const namesByChannel = new Map<string, string[]>();
+  if (request.method === "POST") {
+    if (!request.body) throw new RelayError(400, "Provide a guide request body.");
+    const { data, truncated } = await readBounded(
+      request.body,
+      GUIDE_REQUEST_MAX_BYTES,
+    );
+    if (truncated) throw new RelayError(413, "That guide request is too large.");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(data));
+    } catch {
+      throw new RelayError(400, "Provide valid guide request JSON.");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new RelayError(400, "Provide a valid guide request object.");
+    }
+    const body = parsed as Record<string, unknown>;
+    country = typeof body.country === "string" ? body.country : "";
+    timeZone = typeof body.timeZone === "string" && body.timeZone.length <= 64
+      ? body.timeZone
+      : "";
+    const channels = Array.isArray(body.channels) ? body.channels : [];
+    channelIds = [];
+    for (const candidate of channels.slice(0, 2_001)) {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+      const channel = candidate as Record<string, unknown>;
+      if (typeof channel.id !== "string") continue;
+      channelIds.push(channel.id);
+      const names = Array.isArray(channel.names)
+        ? channel.names.filter((name): name is string => {
+          return typeof name === "string" && name.length > 0 && name.length <= 256;
+        }).slice(0, 12)
+        : [];
+      if (names.length) namesByChannel.set(channel.id, names);
+    }
+  }
+  const result = await loadAutoEpg(
+    country,
+    channelIds,
+    fetch,
+    timeZone,
+    namesByChannel,
+  );
   // Every browser guide request must reach this handler so its one-time
   // Turnstile token is verified. Upstream guide caching belongs inside the
   // Worker, never in a browser or shared HTTP cache in front of verification.
@@ -467,10 +512,13 @@ export default {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
-    if (request.method !== "GET") {
-      return json({ error: "Only GET requests are supported." }, 405);
-    }
     const url = new URL(request.url);
+    if (
+      request.method !== "GET"
+      && !(url.pathname === "/epg" && request.method === "POST")
+    ) {
+      return json({ error: "That method is not supported for this route." }, 405);
+    }
     try {
       switch (url.pathname) {
         case "/health":

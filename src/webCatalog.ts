@@ -13,6 +13,10 @@ import type {
   StreamSource,
   TransportHint,
 } from "./playback/types";
+import {
+  loadAdditivePlaylists,
+  type AdditivePlaylistEntry,
+} from "./additivePlaylists";
 import { RELAY_BASE } from "./relayClient";
 import {
   isFreshCatalogHealth,
@@ -21,8 +25,8 @@ import {
   streamSourceHealthIdentity,
 } from "./streamHealthIndex";
 
-export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v2";
-export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v2";
+export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v3";
+export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v3";
 const WEB_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
 const API_BASE = "https://iptv-org.github.io/api";
 const FETCH_TIMEOUT_MS = 45_000;
@@ -41,16 +45,29 @@ export const OPTIONAL_FAST_PLAYLISTS = [
 export const ANI_ONE_DEAD_URL = "https://amg19223-amg19223c9-amgplt0019.playout.now3.amagi.tv/playlist/amg19223-amg19223c9-amgplt0019/playlist.m3u8";
 export const ANI_ONE_CURRENT_URL = "https://amg19223-amg19223c9-amgplt0352.playout.now3.amagi.tv/playlist/amg19223-amg19223c9-amgplt0352/playlist.m3u8";
 
+export const VERIFIED_PUBLIC_FALLBACKS = [
+  {
+    channelId: "TVBrasil.br",
+    title: "TV Brasil Internacional",
+    url: "https://tvbrasilinternacional-stream.ebc.com.br/index.m3u8",
+    label: "International feed",
+    provenance: "EBC public TV Brasil Internacional stream",
+  },
+] as const;
+
 export type WebChannel = {
   key: string;
   id: string;
   feed?: string | null;
   name: string;
+  altNames?: string[];
+  owners?: string[];
   logo?: string | null;
   categories: string[];
   country?: string | null;
   languages: string[];
   broadcastArea: string[];
+  timezones?: string[];
   sources: StreamSource[];
   url?: string;
   referrer?: string | null;
@@ -60,6 +77,10 @@ export type WebChannel = {
   format?: string | null;
   network?: string | null;
   website?: string | null;
+  launched?: string | null;
+  replacedBy?: string | null;
+  isNsfw?: boolean;
+  provenance?: string[];
   isMain: boolean;
 };
 
@@ -73,6 +94,9 @@ export type WebCatalog = {
   countries: CountryOption[];
   languages: NamedOption[];
   regions: RegionOption[];
+  subdivisions: NamedOption[];
+  cities: NamedOption[];
+  timezones: NamedOption[];
   updatedAt: string;
   source: string;
 };
@@ -86,18 +110,27 @@ export type ApiPayload = {
   languages: ApiLanguage[];
   countries: ApiCountry[];
   regions: ApiRegion[];
+  subdivisions: ApiSubdivision[];
+  cities: ApiCity[];
+  timezones: ApiTimezone[];
   blocklist: ApiBlock[];
 };
 
 type ApiChannel = {
   id: string; name: string; network?: string | null; country: string;
-  categories?: string[]; closed?: string | null; website?: string | null;
+  alt_names?: string[]; owners?: string[]; categories?: string[];
+  is_nsfw?: boolean; launched?: string | null; closed?: string | null;
+  replaced_by?: string | null; website?: string | null;
 };
 type ApiFeed = {
   channel: string; id: string; name: string; is_main?: boolean;
-  broadcast_area?: string[]; languages?: string[]; format?: string | null;
+  alt_names?: string[]; broadcast_area?: string[]; timezones?: string[];
+  languages?: string[]; format?: string | null;
 };
-type ApiLogo = { channel: string; feed?: string | null; in_use?: boolean; url: string };
+type ApiLogo = {
+  channel: string; feed?: string | null; in_use?: boolean; tags?: string[];
+  width?: number; height?: number; format?: string | null; url: string;
+};
 type ApiStream = {
   channel?: string | null; feed?: string | null; title: string; url: string;
   quality?: string | null; label?: string | null; user_agent?: string | null; referrer?: string | null;
@@ -106,7 +139,10 @@ type ApiCategory = { id: string; name: string; description: string };
 type ApiLanguage = { code: string; name: string };
 type ApiCountry = { name: string; code: string; languages?: string[]; flag: string };
 type ApiRegion = { code: string; name: string; countries?: string[] };
-type ApiBlock = { channel: string };
+type ApiSubdivision = { country: string; code: string; name: string; parent?: string | null };
+type ApiCity = { country: string; subdivision?: string | null; code: string; name: string; wikidata_id?: string | null };
+type ApiTimezone = { id: string; utc_offset: string; countries?: string[] };
+type ApiBlock = { channel: string; reason?: string; ref?: string };
 
 // --- helpers ported from lib.rs ---
 
@@ -143,6 +179,20 @@ function normalizePlainText(value?: string | null, maxLen = 256): string | null 
   const text = trimWrappingQuotes(value);
   if (!text || text.length > maxLen || /[\p{Cc}]/u.test(text)) return null;
   return text;
+}
+
+function normalizePlainTextList(
+  values: readonly string[] | null | undefined,
+  maxLen = 256,
+): string[] {
+  const output: string[] = [];
+  for (const value of values || []) {
+    const normalized = normalizePlainText(value, maxLen);
+    if (normalized && !output.some((item) => item.toLowerCase() === normalized.toLowerCase())) {
+      output.push(normalized);
+    }
+  }
+  return output.sort(compareText);
 }
 
 function normalizeUserAgent(value?: string | null): string | null {
@@ -238,7 +288,9 @@ function sourcePreferenceScore(source: StreamSource, now = Date.now()): number {
   const availabilityScore = sourceAvailability(source.label) === "normal" ? 2_000
     : sourceAvailability(source.label) === "part-time" ? 1_000 : 0;
   const healthScore = !isFreshCatalogHealth(source.catalogHealth, now) ? 20_000
-    : source.catalogHealth.status === "online" ? 30_000 + source.catalogHealth.score * 10
+    : source.catalogHealth.status === "online" && sourceUsesLiteralIp(source)
+      ? 15_000 + source.catalogHealth.score * 5
+      : source.catalogHealth.status === "online" ? 30_000 + source.catalogHealth.score * 10
       : source.catalogHealth.status === "blocked" ? 18_000
         : source.catalogHealth.status === "timeout" ? 5_000 : 0;
   return healthScore + availabilityScore + transportScore + browserDeliveryScore + qualityScore;
@@ -312,6 +364,22 @@ function compareText(left: string, right: string): number {
   return lower || left.localeCompare(right);
 }
 
+function logoPreferenceScore(logo: ApiLogo): number {
+  const tags = logo.tags || [];
+  const tagged = tags.includes("horizontal") ? 1_000_000
+    : tags.includes("square") ? 500_000 : 0;
+  const vector = logo.format?.toUpperCase() === "SVG" ? 250_000 : 0;
+  const area = Math.min(200_000, Math.max(0, (logo.width || 0) * (logo.height || 0)));
+  return tagged + vector + area;
+}
+
+function chooseLogo(current: ApiLogo | undefined, candidate: ApiLogo): ApiLogo {
+  if (!current) return candidate;
+  return logoPreferenceScore(candidate) > logoPreferenceScore(current)
+    ? candidate
+    : current;
+}
+
 function chooseText(current: string | null | undefined, candidate: string | null | undefined): string | null | undefined {
   if (candidate == null || !candidate.trim()) return current;
   if (current == null || compareText(candidate, current) < 0) return candidate;
@@ -322,6 +390,7 @@ function mergeSource(target: StreamSource, candidate: StreamSource): void {
   target.title = chooseText(target.title, candidate.title) ?? null;
   target.quality = chooseText(target.quality, candidate.quality) ?? null;
   target.label = chooseText(target.label, candidate.label) ?? null;
+  target.provenance = chooseText(target.provenance, candidate.provenance) ?? undefined;
   target.preferenceScore = sourcePreferenceScore(target);
 }
 
@@ -415,6 +484,10 @@ function normalizeChannelSources(channel: WebChannel): void {
 
 function mergeChannel(target: WebChannel, candidate: WebChannel): void {
   target.name = chooseName(target.name, candidate.name);
+  target.altNames ||= [];
+  target.owners ||= [];
+  target.timezones ||= [];
+  target.provenance ||= [];
   target.logo = chooseText(target.logo, candidate.logo) ?? null;
   target.country = chooseText(target.country, candidate.country) ?? null;
   target.format = chooseText(target.format, candidate.format) ?? null;
@@ -423,6 +496,13 @@ function mergeChannel(target: WebChannel, candidate: WebChannel): void {
   mergeUnique(target.categories, candidate.categories);
   mergeUnique(target.languages, candidate.languages);
   mergeUnique(target.broadcastArea, candidate.broadcastArea);
+  mergeUnique(target.altNames, candidate.altNames || []);
+  mergeUnique(target.owners, candidate.owners || []);
+  mergeUnique(target.timezones, candidate.timezones || []);
+  mergeUnique(target.provenance, candidate.provenance || []);
+  target.launched = chooseText(target.launched, candidate.launched) ?? null;
+  target.replacedBy = chooseText(target.replacedBy, candidate.replacedBy) ?? null;
+  target.isNsfw = Boolean(target.isNsfw || candidate.isNsfw);
   target.isMain = target.isMain || candidate.isMain;
   for (const source of candidate.sources) addSource(target, source);
 }
@@ -633,6 +713,140 @@ export function overlayAmagiFastFallbacks(
   return added;
 }
 
+function mappedMjhChannelId(providerId: string): string | null {
+  const fixed: Record<string, string> = {
+    "mjh-abc-kids": "ABCKids.au",
+    "mjh-abc-me": "ABCEntertains.au",
+    "mjh-abc-news": "ABCNews.au",
+    "mjh-abc-tv-plus": "ABCTVPlus.au",
+    "mjh-ausbiz-fast": "AusbizTV.au",
+    "mjh-cricketgold-fast": "CricketGold.au",
+    "mjh-racing-fast": "Racingcom.au",
+    "mjh-sbs-6nat": "SBSWorldWatch.au",
+    "mjh-sky-racing-1": "SkyRacing1.au",
+    "mjh-sky-racing-2": "SkyRacing2.au",
+    "mjh-sky-racing-thoroughbred": "SkyThoroughbredCentral.au",
+    "mjh-tvsn-fast": "TVSN.au",
+  };
+  if (fixed[providerId]) return fixed[providerId];
+  if (/^mjh-abc-(?:act|nsw|nt|qld|sa|tas|vic|wa)$/.test(providerId)) return "ABCTV.au";
+  if (/^mjh-seven-/.test(providerId)) return "Channel7.au";
+  if (/^mjh-channel-9-/.test(providerId)) return "Channel9.au";
+  if (/^mjh-gem-/.test(providerId)) return "9Gem.au";
+  if (/^mjh-go-/.test(providerId)) return "9Go.au";
+  if (/^mjh-life-/.test(providerId)) return "9Life.au";
+  if (/^mjh-10bold-/.test(providerId)) return "10Bold.au";
+  return null;
+}
+
+function chooseMappedChannel(
+  channels: WebChannel[],
+  entry: AdditivePlaylistEntry,
+): WebChannel | undefined {
+  const mappedId = mappedMjhChannelId(entry.providerId);
+  let candidates = mappedId
+    ? channels.filter((channel) => channel.id === mappedId)
+    : [];
+  if (!candidates.length) {
+    const title = semanticChannelTitle(entry.name);
+    if (title) {
+      candidates = channels.filter((channel) => {
+        return (!entry.config.country || channel.country === entry.config.country)
+          && semanticChannelTitle(channel.name.replace(/\s+—\s+.+$/, "")) === title;
+      });
+    }
+  }
+  if (!candidates.length) return undefined;
+  return candidates.find((channel) => {
+    return entry.config.broadcastArea.some((area) => channel.broadcastArea.includes(area));
+  }) || candidates.find((channel) => channel.isMain) || candidates[0];
+}
+
+export function overlayAdditivePlaylists(
+  channels: WebChannel[],
+  entries: readonly AdditivePlaylistEntry[],
+): { addedSources: number; addedChannels: number } {
+  let addedSources = 0;
+  let addedChannels = 0;
+  for (const entry of entries) {
+    const source = makeStreamSource(
+      entry.name,
+      entry.url,
+      entry.referrer,
+      entry.userAgent,
+      null,
+      null,
+    );
+    if (!source) continue;
+    source.provenance = entry.config.name;
+    let channel = chooseMappedChannel(channels, entry);
+    if (!channel) {
+      const identity = `${entry.config.id}\u0000${entry.providerId}\u0000${entry.name}`;
+      const id = `external-${fnv1a64(identity).toString(16).padStart(16, "0")}`;
+      channel = {
+        key: logicalChannelKey(id, entry.config.id),
+        id,
+        feed: entry.config.id,
+        name: entry.name,
+        altNames: [],
+        owners: [],
+        logo: entry.logo,
+        categories: ["undefined"],
+        country: entry.config.country,
+        languages: [],
+        broadcastArea: [...entry.config.broadcastArea],
+        timezones: [...entry.config.timezones],
+        sources: [],
+        format: null,
+        network: "i.mjh.nz",
+        website: "https://i.mjh.nz/",
+        launched: null,
+        replacedBy: null,
+        isNsfw: false,
+        provenance: [entry.config.name],
+        isMain: true,
+      };
+      channels.push(channel);
+      addedChannels += 1;
+    }
+    channel.provenance ||= [];
+    mergeUnique(channel.provenance, [entry.config.name]);
+    const before = channel.sources.length;
+    addSource(channel, source);
+    if (channel.sources.length > before) addedSources += 1;
+    sortAndSyncSources(channel);
+  }
+  channels.sort((left, right) =>
+    left.name.toLowerCase().localeCompare(right.name.toLowerCase())
+    || left.key.localeCompare(right.key));
+  return { addedSources, addedChannels };
+}
+
+export function overlayVerifiedPublicFallbacks(channels: WebChannel[]): number {
+  let added = 0;
+  for (const fallback of VERIFIED_PUBLIC_FALLBACKS) {
+    const channel = channels.find((candidate) => candidate.id === fallback.channelId);
+    if (!channel) continue;
+    const source = makeStreamSource(
+      fallback.title,
+      fallback.url,
+      null,
+      null,
+      null,
+      fallback.label,
+    );
+    if (!source) continue;
+    source.provenance = fallback.provenance;
+    const before = channel.sources.length;
+    addSource(channel, source);
+    if (channel.sources.length > before) added += 1;
+    channel.provenance ||= [];
+    mergeUnique(channel.provenance, [fallback.provenance]);
+    sortAndSyncSources(channel);
+  }
+  return added;
+}
+
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 async function readBoundedPlaylist(response: Response): Promise<string | null> {
@@ -727,8 +941,8 @@ function channelFromApiStream(
   excludedChannelIds: Set<string>,
   feedMap: Map<string, ApiFeed>,
   mainFeedMap: Map<string, ApiFeed>,
-  channelLogos: Map<string, string>,
-  feedLogos: Map<string, string>,
+  channelLogos: Map<string, ApiLogo>,
+  feedLogos: Map<string, ApiLogo>,
   languageNames: Map<string, string>,
 ): WebChannel | null {
   const channelId = stream.channel ?? null;
@@ -759,9 +973,11 @@ ${explicitFeedId}`)
     : mainFeedMap.get(channelId);
   // A stream's explicit feed is authoritative even when feeds.json is temporarily behind it.
   const feedId = explicitFeedId ?? feed?.id ?? null;
-  const logo = (feedId && feedLogos.get(`${channelId}
-${feedId}`)) || channelLogos.get(channelId) || null;
+  const logo = ((feedId && feedLogos.get(`${channelId}
+${feedId}`)) || channelLogos.get(channelId))?.url || null;
   const languages = (feed?.languages || []).map((code) => languageNames.get(code) || code);
+  const feedAltNames = normalizePlainTextList(feed?.alt_names, 256);
+  const timezones = normalizePlainTextList(feed?.timezones, 128);
   const source = makeStreamSource(stream.title, stream.url, stream.referrer, stream.user_agent, stream.quality, stream.label);
   if (!source) return null;
 
@@ -775,11 +991,13 @@ ${feedId}`)) || channelLogos.get(channelId) || null;
       : explicitFeedId ? `${baseName} — ${explicitFeedId}` : baseName;
     return {
       key: logicalChannelKey(channelId, feedId), id: channelId, feed: feedId, name: displayName, logo,
-      categories: ["undefined"], country: countryFromId(channelId), languages,
+      altNames: feedAltNames, owners: [], categories: ["undefined"], country: countryFromId(channelId), languages,
       broadcastArea: feed?.broadcast_area || [],
+      timezones,
       sources: [source], url: source.url, referrer: source.referrer, userAgent: source.userAgent,
       quality: source.quality, label: source.label, format: feed?.format ?? null,
-      network: null, website: null, isMain: feed?.is_main ?? !explicitFeedId,
+      network: null, website: null, launched: null, replacedBy: null,
+      isNsfw: false, isMain: feed?.is_main ?? !explicitFeedId,
     };
   }
 
@@ -790,11 +1008,20 @@ ${feedId}`)) || channelLogos.get(channelId) || null;
     : explicitFeedId ? `${apiChannel.name} — ${explicitFeedId}` : apiChannel.name;
   return {
     key: logicalChannelKey(channelId, feedId), id: channelId, feed: feedId, name: displayName, logo,
+    altNames: normalizePlainTextList([
+      ...(apiChannel.alt_names || []),
+      ...feedAltNames,
+    ], 256),
+    owners: normalizePlainTextList(apiChannel.owners, 256),
     categories: apiChannel.categories?.length ? apiChannel.categories : ["undefined"],
     country: apiChannel.country, languages, broadcastArea: feed?.broadcast_area || [],
+    timezones,
     sources: [source], url: source.url, referrer: source.referrer, userAgent: source.userAgent,
     quality: source.quality, label: source.label, format: feed?.format ?? null,
     network: apiChannel.network ?? null, website: apiChannel.website ?? null,
+    launched: apiChannel.launched ?? null,
+    replacedBy: apiChannel.replaced_by ?? null,
+    isNsfw: Boolean(apiChannel.is_nsfw),
     isMain: feed?.is_main ?? !explicitFeedId,
   };
 }
@@ -859,11 +1086,45 @@ function coverageOptionCounts(
   return [countryCounts, regionCounts];
 }
 
+function preciseDimensionCounts(channels: WebChannel[]): {
+  subdivisions: Map<string, number>;
+  cities: Map<string, number>;
+  timezones: Map<string, number>;
+} {
+  const subdivisionCounts = new Map<string, number>();
+  const cityCounts = new Map<string, number>();
+  const timezoneCounts = new Map<string, number>();
+  for (const channel of channels) {
+    const subdivisions = new Set<string>();
+    const cities = new Set<string>();
+    for (const rawArea of channel.broadcastArea) {
+      const [kind, rawValue] = rawArea.trim().split("/", 2);
+      const value = rawValue?.trim().toUpperCase();
+      if (!value) continue;
+      if (kind?.toLowerCase() === "s") subdivisions.add(value);
+      if (kind?.toLowerCase() === "ct") cities.add(value);
+    }
+    for (const subdivision of subdivisions) {
+      subdivisionCounts.set(subdivision, (subdivisionCounts.get(subdivision) || 0) + 1);
+    }
+    for (const city of cities) cityCounts.set(city, (cityCounts.get(city) || 0) + 1);
+    for (const timezone of new Set(channel.timezones || [])) {
+      timezoneCounts.set(timezone, (timezoneCounts.get(timezone) || 0) + 1);
+    }
+  }
+  return {
+    subdivisions: subdivisionCounts,
+    cities: cityCounts,
+    timezones: timezoneCounts,
+  };
+}
+
 /** Build the catalogue from already-fetched IPTV-org API payloads. Pure. */
 export function buildCatalogFromApi(
   api: ApiPayload,
   now = new Date(),
   optionalFastFallbacks: readonly StreamSource[] = [],
+  additivePlaylistEntries: readonly AdditivePlaylistEntry[] = [],
 ): WebCatalog {
   const blocked = new Set(api.blocklist.map((item) => item.channel));
   const excludedChannelIds = new Set<string>(blocked);
@@ -887,16 +1148,19 @@ export function buildCatalogFromApi(
 ${feed.id}`, feed);
   }
 
-  const channelLogos = new Map<string, string>();
-  const feedLogos = new Map<string, string>();
+  const channelLogos = new Map<string, ApiLogo>();
+  const feedLogos = new Map<string, ApiLogo>();
   for (const logo of api.logos) {
     if (!logo.in_use) continue;
     if (logo.feed) {
       const key = `${logo.channel}
 ${logo.feed}`;
-      if (!feedLogos.has(key)) feedLogos.set(key, logo.url);
-    } else if (!channelLogos.has(logo.channel)) {
-      channelLogos.set(logo.channel, logo.url);
+      feedLogos.set(key, chooseLogo(feedLogos.get(key), logo));
+    } else {
+      channelLogos.set(
+        logo.channel,
+        chooseLogo(channelLogos.get(logo.channel), logo),
+      );
     }
   }
 
@@ -909,6 +1173,8 @@ ${logo.feed}`;
   );
   const repairedAmagiSources = repairKnownDeadAmagiSources(channels);
   const addedFastFallbacks = overlayAmagiFastFallbacks(channels, optionalFastFallbacks);
+  const additive = overlayAdditivePlaylists(channels, additivePlaylistEntries);
+  const verifiedPublicFallbacks = overlayVerifiedPublicFallbacks(channels);
 
   const categoryCounts = new Map<string, number>();
   const languageCounts = new Map<string, number>();
@@ -917,6 +1183,7 @@ ${logo.feed}`;
     for (const language of channel.languages) languageCounts.set(language, (languageCounts.get(language) || 0) + 1);
   }
   const [countryCounts, regionCounts] = coverageOptionCounts(channels, api.regions);
+  const dimensionCounts = preciseDimensionCounts(channels);
 
   const categories: NamedOption[] = api.categories
     .map((category) => ({ id: category.id, name: category.name, description: category.description, count: categoryCounts.get(category.id) || 0 }))
@@ -933,13 +1200,44 @@ ${logo.feed}`;
     .map((region) => ({ code: region.code, name: region.name, countries: region.countries || [], count: regionCounts.get(region.code.toUpperCase()) || 0 }))
     .filter((region) => region.count > 0)
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const subdivisions: NamedOption[] = api.subdivisions
+    .map((subdivision) => ({
+      id: subdivision.code,
+      name: `${subdivision.name} (${subdivision.country})`,
+      description: subdivision.parent || null,
+      count: dimensionCounts.subdivisions.get(subdivision.code.toUpperCase()) || 0,
+    }))
+    .filter((subdivision) => subdivision.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const cities: NamedOption[] = api.cities
+    .map((city) => ({
+      id: city.code,
+      name: `${city.name} (${city.country})`,
+      description: city.subdivision || city.wikidata_id || null,
+      count: dimensionCounts.cities.get(city.code.toUpperCase()) || 0,
+    }))
+    .filter((city) => city.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const timezones: NamedOption[] = api.timezones
+    .map((timezone) => ({
+      id: timezone.id,
+      name: timezone.id.split("_").join(" "),
+      description: timezone.utc_offset,
+      count: dimensionCounts.timezones.get(timezone.id) || 0,
+    }))
+    .filter((timezone) => timezone.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
   return {
     channels, categories, countries, languages, regions,
+    subdivisions, cities, timezones,
     updatedAt: now.toISOString(),
-    source: repairedAmagiSources + addedFastFallbacks > 0
-      ? "IPTV-org API + current FAST fallbacks"
-      : "IPTV-org API",
+    source: [
+      "IPTV-org API",
+      ...(repairedAmagiSources + addedFastFallbacks > 0 ? ["current FAST fallbacks"] : []),
+      ...(additive.addedSources > 0 ? ["regional/provider playlists"] : []),
+      ...(verifiedPublicFallbacks > 0 ? ["verified public fallbacks"] : []),
+    ].join(" + "),
   };
 }
 
@@ -1006,21 +1304,29 @@ export async function loadWebCatalog(force = false): Promise<WebCatalog> {
         fetchJson<ApiLanguage[]>("languages"),
         fetchJson<ApiCountry[]>("countries"),
         fetchJson<ApiRegion[]>("regions"),
+        fetchJson<ApiSubdivision[]>("subdivisions"),
+        fetchJson<ApiCity[]>("cities"),
+        fetchJson<ApiTimezone[]>("timezones"),
         fetchJson<ApiBlock[]>("blocklist"),
       ]);
     const [
-      [channels, feeds, logos, streams, categories, languages, countries, regions, blocklist],
+      [channels, feeds, logos, streams, categories, languages, countries, regions, subdivisions, cities, timezones, blocklist],
       optionalFastFallbacks,
       streamHealth,
+      additivePlaylistEntries,
     ] = await Promise.all([
       requiredCatalog,
       loadOptionalFastFallbacks().catch(() => []),
       loadStreamHealthIndex().catch(() => null),
+      loadAdditivePlaylists(
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ).catch(() => []),
     ]);
     const catalog = buildCatalogFromApi(
-      { channels, feeds, logos, streams, categories, languages, countries, regions, blocklist },
+      { channels, feeds, logos, streams, categories, languages, countries, regions, subdivisions, cities, timezones, blocklist },
       new Date(),
       optionalFastFallbacks,
+      additivePlaylistEntries,
     );
     const matchedHealth = streamHealth
       ? applyStreamHealthHints(catalog.channels, streamHealth.hints)

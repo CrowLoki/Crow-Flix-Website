@@ -39,8 +39,11 @@ import {
 } from "@phosphor-icons/react";
 import {
   canonicalCountryCode,
+  channelMatchesCity,
   channelMatchesCountry,
   channelMatchesRegion,
+  channelMatchesSubdivision,
+  channelMatchesTimezone,
 } from "./broadcastArea";
 import { mergeChannelsByKey } from "./catalogMerge";
 import {
@@ -99,7 +102,14 @@ const BRAND_ICON = "/assets/brand/crow-head.png";
 const PAGE_SIZE = 48;
 
 type View = "home" | "live" | "guide" | "web" | "favourites" | "about";
-type BrowseMode = "categories" | "countries" | "languages" | "regions";
+type BrowseMode =
+  | "categories"
+  | "countries"
+  | "languages"
+  | "regions"
+  | "subdivisions"
+  | "cities"
+  | "timezones";
 
 const PlaybackAvailabilityContext = createContext<Record<string, ChannelAvailability>>({});
 
@@ -108,11 +118,14 @@ type Channel = {
   id: string;
   feed?: string | null;
   name: string;
+  altNames?: string[];
+  owners?: string[];
   logo?: string | null;
   categories: string[];
   country?: string | null;
   languages: string[];
   broadcastArea: string[];
+  timezones?: string[];
   sources: StreamSource[];
   url?: string;
   referrer?: string | null;
@@ -122,6 +135,10 @@ type Channel = {
   format?: string | null;
   network?: string | null;
   website?: string | null;
+  launched?: string | null;
+  replacedBy?: string | null;
+  isNsfw?: boolean;
+  provenance?: string[];
   isMain: boolean;
 };
 
@@ -134,6 +151,9 @@ type Catalog = {
   countries: CountryOption[];
   languages: NamedOption[];
   regions: RegionOption[];
+  subdivisions: NamedOption[];
+  cities: NamedOption[];
+  timezones: NamedOption[];
   updatedAt: string;
   source: string;
 };
@@ -194,6 +214,7 @@ const demoCatalog: Catalog = {
   countries: ["AU", "US", "UK", "CA", "DE", "FR", "JP", "NZ", "IT", "NO"].map((code) => ({ code, name: countryName(code), flag: "", languages: ["eng"], count: demoChannels.filter((channel) => channel.country === code).length })),
   languages: [{ id: "English", name: "English", count: demoChannels.length }],
   regions: [{ code: "WORLD", name: "Worldwide", countries: ["AU", "US", "UK", "CA", "DE", "FR", "JP", "NZ", "IT", "NO"], count: demoChannels.length }],
+  subdivisions: [], cities: [], timezones: [],
   updatedAt: new Date().toISOString(), source: "CrowFlix browser preview",
 };
 
@@ -203,6 +224,9 @@ const emptyCatalog: Catalog = {
   countries: [],
   languages: [],
   regions: [],
+  subdivisions: [],
+  cities: [],
+  timezones: [],
   updatedAt: "",
   source: "IPTV-org catalogue unavailable",
 };
@@ -244,6 +268,20 @@ function nextProgramme(programmes: Programme[], channelId: string, clock: Date) 
 
 function uniqueChannelIds(channels: Channel[]) {
   return [...new Set(channels.map((channel) => channel.id))];
+}
+
+function uniqueGuideChannels(channels: Channel[]) {
+  const byId = new Map<string, Set<string>>();
+  for (const channel of channels) {
+    const names = byId.get(channel.id) || new Set<string>();
+    names.add(channel.name.replace(/\s+—\s+.+$/, ""));
+    for (const name of channel.altNames || []) names.add(name);
+    byId.set(channel.id, names);
+  }
+  return [...byId.entries()].map(([id, names]) => ({
+    id,
+    names: [...names].slice(0, 12),
+  }));
 }
 
 function formatTime(value: Date) {
@@ -293,6 +331,9 @@ export default function App() {
   const [country, setCountry] = useState("all");
   const [language, setLanguage] = useState("all");
   const [region, setRegion] = useState("all");
+  const [subdivision, setSubdivision] = useState("all");
+  const [city, setCity] = useState("all");
+  const [timezone, setTimezone] = useState("all");
   const [guideCountry, setGuideCountry] = useState(preferredCountry());
   const [programmes, setProgrammes] = useState<Programme[]>([]);
   const [guideStatus, setGuideStatus] = useState("Preparing the live guide…");
@@ -482,8 +523,9 @@ export default function App() {
       try {
         const result = await loadRelayGuide(
           targetCountry,
-          uniqueChannelIds(countryChannels),
+          uniqueGuideChannels(countryChannels),
           turnstileToken,
+          Intl.DateTimeFormat().resolvedOptions().timeZone,
         );
         guideCache.current.set(targetCountry, result);
         setProgrammes(result.programmes);
@@ -673,7 +715,16 @@ export default function App() {
         region !== "all"
         && !channelMatchesRegion(channel, region, catalog.regions)
       ) return false;
-      if (needle && !`${channel.name} ${channel.network || ""} ${channel.categories.join(" ")} ${channel.languages.join(" ")} ${countryName(channel.country)}`.toLowerCase().includes(needle)) return false;
+      if (
+        subdivision !== "all"
+        && !channelMatchesSubdivision(channel, subdivision)
+      ) return false;
+      if (city !== "all" && !channelMatchesCity(channel, city)) return false;
+      if (
+        timezone !== "all"
+        && !channelMatchesTimezone(channel, timezone)
+      ) return false;
+      if (needle && !`${channel.name} ${(channel.altNames || []).join(" ")} ${(channel.owners || []).join(" ")} ${(channel.provenance || []).join(" ")} ${channel.network || ""} ${channel.categories.join(" ")} ${channel.languages.join(" ")} ${(channel.timezones || []).join(" ")} ${channel.broadcastArea.join(" ")} ${countryName(channel.country)}`.toLowerCase().includes(needle)) return false;
       return true;
     });
     return rankChannelsByAvailability(
@@ -682,7 +733,7 @@ export default function App() {
       healthNow,
       sourcePreflights,
     );
-  }, [catalog.channels, catalog.regions, category, country, healthNow, language, playbackHealth, query, region, sourcePreflights]);
+  }, [catalog.channels, catalog.regions, category, city, country, healthNow, language, playbackHealth, query, region, sourcePreflights, subdivision, timezone]);
 
   const favouriteChannels = useMemo(() => favourites.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, favourites]);
   const recentChannels = useMemo(() => recent.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, recent]);
@@ -736,6 +787,9 @@ export default function App() {
     country,
     language,
     region,
+    subdivision,
+    city,
+    timezone,
     guideCountry,
     view === "favourites" ? favourites.join("\u0000") : "",
     playing?.key || "",
@@ -848,7 +902,7 @@ export default function App() {
       {catalogError && <CatalogErrorBanner message={catalogError} hasCatalog={catalog.channels.length > 0} loading={loading} onRetry={() => void loadCatalog(catalog.channels.length > 0)} />}
       <main>
         {view === "home" && <HomeView channels={rankedCatalogChannels} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onInfo={() => setView("guide")} />}
-        {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} />}
+        {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} subdivision={subdivision} setSubdivision={setSubdivision} city={city} setCity={setCity} timezone={timezone} setTimezone={setTimezone} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} />}
         {view === "guide" && <GuideView catalog={catalog} country={guideCountry} setCountry={setGuideCountry} programmes={programmes} clock={clock} status={guideStatus} loading={guideLoading} requiresVerification={!isDesktop && guideNeedsVerification} verificationError={guideVerificationError} onVerified={(token) => void loadGuide(guideCountry, true, token)} onVerificationError={(message) => { setGuideVerificationError(message || null); if (message) setGuideStatus(message); }} onRefresh={() => void loadGuide(guideCountry, true)} onPlay={play} />}
         {view === "web" && <WebDestinationsView items={webDestinations} query={query} onOpen={(item) => void openWebsite(item.url, item.title)} onSave={saveWebDestination} onDelete={deleteWebDestination} onImport={importWebDestinations} onMessage={showToast} />}
         {view === "favourites" && <FavouritesView channels={favouriteChannels} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onBrowse={() => setView("live")} />}
@@ -939,29 +993,69 @@ function ChannelCard({ channel, programme, favourite, onPlay, onFavourite }: { c
   return <article className="channel-card"><button className="card-main" onClick={() => onPlay(channel)}><div className="card-image">{channel.logo ? <img src={channel.logo} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; event.currentTarget.className = "fallback-logo"; }} /> : <img className="fallback-logo" src={BRAND_ICON} alt="" />}<span className={`live-badge availability-${availability}`}>{availabilityLabel(availability)}</span><span className="quality-badge">{channelQuality(channel)}</span><span className="play-overlay"><Play weight="fill" /></span></div><div className="card-copy"><strong>{programme?.title || channel.name}</strong><span>{channel.name}</span><small>{countryName(channel.country)} · {titleCase(channel.categories[0])}</small></div></button><button className="heart-button" onClick={() => onFavourite(channel)} aria-label={`Toggle ${channel.name} favourite`}><Heart weight={favourite ? "fill" : "regular"} /></button></article>;
 }
 
-function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, favourites, programmes, clock, onPlay, onFavourite }: { catalog: Catalog; channels: Channel[]; mode: BrowseMode; setMode: (mode: BrowseMode) => void; category: string; setCategory: (value: string) => void; country: string; setCountry: (value: string) => void; language: string; setLanguage: (value: string) => void; region: string; setRegion: (value: string) => void; favourites: string[]; programmes: Programme[]; clock: Date; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void }) {
-  const availabilityByChannel = useContext(PlaybackAvailabilityContext);
-  const [showAllCatalogued, setShowAllCatalogued] = useState(false);
+type LiveViewProps = {
+  catalog: Catalog; channels: Channel[]; mode: BrowseMode;
+  setMode: (mode: BrowseMode) => void;
+  category: string; setCategory: (value: string) => void;
+  country: string; setCountry: (value: string) => void;
+  language: string; setLanguage: (value: string) => void;
+  region: string; setRegion: (value: string) => void;
+  subdivision: string; setSubdivision: (value: string) => void;
+  city: string; setCity: (value: string) => void;
+  timezone: string; setTimezone: (value: string) => void;
+  favourites: string[]; programmes: Programme[]; clock: Date;
+  onPlay: (channel: Channel) => void;
+  onFavourite: (channel: Channel) => void;
+};
+
+function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, subdivision, setSubdivision, city, setCity, timezone, setTimezone, favourites, programmes, clock, onPlay, onFavourite }: LiveViewProps) {
+  const [catalogOrder, setCatalogOrder] = useState<"ranked" | "alphabetical">("ranked");
   const [page, setPage] = useState(1);
-  const visibleChannels = useMemo(() => showAllCatalogued
+  const visibleChannels = useMemo(() => catalogOrder === "ranked"
     ? channels
-    : channels.filter((channel) => {
-      const status = availabilityByChannel[channel.key] || "unverified";
-      return status === "verified" || status === "unverified";
-    }), [availabilityByChannel, channels, showAllCatalogued]);
+    : [...channels].sort((left, right) => left.name.localeCompare(right.name)),
+  [catalogOrder, channels]);
   const pageCount = Math.max(1, Math.ceil(visibleChannels.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const matchingSources = visibleChannels.reduce((total, channel) => total + channelSources(channel).length, 0);
-  const excludedCount = channels.length - visibleChannels.length;
-  useEffect(() => setPage(1), [category, country, language, region, showAllCatalogued, visibleChannels.length]);
-  const modeOptions = mode === "categories" ? catalog.categories.slice(0, 40) : mode === "countries" ? catalog.countries.slice(0, 80).map((item) => ({ id: item.code, name: `${item.flag} ${item.name}`, count: item.count })) : mode === "languages" ? catalog.languages.slice(0, 60) : catalog.regions.map((item) => ({ id: item.code, name: item.name, count: item.count }));
-  const selected = mode === "categories" ? category : mode === "countries" ? country : mode === "languages" ? language : region;
-  const select = (value: string) => { if (mode === "categories") setCategory(value); if (mode === "countries") setCountry(value); if (mode === "languages") setLanguage(value); if (mode === "regions") setRegion(value); };
-  const clearAll = () => { setCategory("all"); setCountry("all"); setLanguage("all"); setRegion("all"); };
+  useEffect(() => setPage(1), [catalogOrder, category, city, country, language, region, subdivision, timezone, visibleChannels.length]);
+  const optionsByMode: Record<BrowseMode, NamedOption[]> = {
+    categories: catalog.categories,
+    countries: catalog.countries.map((item) => ({ id: item.code, name: `${item.flag} ${item.name}`, count: item.count })),
+    languages: catalog.languages,
+    regions: catalog.regions.map((item) => ({ id: item.code, name: item.name, count: item.count })),
+    subdivisions: catalog.subdivisions,
+    cities: catalog.cities,
+    timezones: catalog.timezones,
+  };
+  const selectedByMode: Record<BrowseMode, string> = {
+    categories: category,
+    countries: country,
+    languages: language,
+    regions: region,
+    subdivisions: subdivision,
+    cities: city,
+    timezones: timezone,
+  };
+  const modeOptions = optionsByMode[mode];
+  const selected = selectedByMode[mode];
+  const select = (value: string) => {
+    if (mode === "categories") setCategory(value);
+    if (mode === "countries") setCountry(value);
+    if (mode === "languages") setLanguage(value);
+    if (mode === "regions") setRegion(value);
+    if (mode === "subdivisions") setSubdivision(value);
+    if (mode === "cities") setCity(value);
+    if (mode === "timezones") setTimezone(value);
+  };
+  const clearAll = () => {
+    setCategory("all"); setCountry("all"); setLanguage("all"); setRegion("all");
+    setSubdivision("all"); setCity("all"); setTimezone("all");
+  };
   return <div className="browse-page">
-    <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television</span><h1>Browse Live TV</h1><p>Working routes are ranked first. Unverified, regional, part-time, and offline catalogue entries are labelled honestly.</p></div><div className="catalog-number"><strong>{visibleChannels.length.toLocaleString()}</strong><span>{showAllCatalogued ? "catalogued" : "best available"} · {matchingSources.toLocaleString()} sources</span></div></div>
-    <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{([["categories", <ListBullets />, "Categories"], ["countries", <GlobeHemisphereWest />, "Countries"], ["languages", <Translate />, "Languages"], ["regions", <MapPin />, "Regions"]] as Array<[BrowseMode, React.ReactNode, string]>).map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{category !== "all" && <b>{titleCase(category)}</b>}{country !== "all" && <b>{countryName(country)}</b>}{language !== "all" && <b>{language}</b>}{region !== "all" && <b>{catalog.regions.find((item) => item.code === region)?.name || region}</b>}<button onClick={clearAll}>Clear all</button></div></aside>
-      <section className="browse-results"><div className="filter-strip"><button className={selected === "all" ? "active" : ""} onClick={() => select("all")}>All</button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => select(item.id)}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}{!showAllCatalogued && excludedCount > 0 ? ` · ${excludedCount.toLocaleString()} limited/offline hidden` : ""}</span></div><div className="availability-switch"><button className={!showAllCatalogued ? "active" : ""} onClick={() => setShowAllCatalogued(false)}>Best available</button><button className={showAllCatalogued ? "active" : ""} onClick={() => setShowAllCatalogued(true)}>All catalogued</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{visibleChannels.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE).map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching available channels" copy={channels.length ? "Choose All catalogued to inspect limited or offline entries." : "Clear a filter or search for something else."} />}</section></div>
+    <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television</span><h1>Browse Live TV</h1><p>The complete matching catalogue stays visible. Working routes rank first, while unverified, regional, part-time, and offline entries remain clearly labelled and reachable.</p></div><div className="catalog-number"><strong>{visibleChannels.length.toLocaleString()}</strong><span>catalogued · {matchingSources.toLocaleString()} sources</span></div></div>
+    <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{([["categories", <ListBullets />, "Categories"], ["countries", <GlobeHemisphereWest />, "Countries"], ["languages", <Translate />, "Languages"], ["regions", <MapPin />, "Regions"], ["subdivisions", <MapPin />, "States / provinces"], ["cities", <House />, "Cities"], ["timezones", <Clock />, "Timezones"]] as Array<[BrowseMode, React.ReactNode, string]>).map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{category !== "all" && <b>{titleCase(category)}</b>}{country !== "all" && <b>{countryName(country)}</b>}{language !== "all" && <b>{language}</b>}{region !== "all" && <b>{catalog.regions.find((item) => item.code === region)?.name || region}</b>}{subdivision !== "all" && <b>{catalog.subdivisions.find((item) => item.id === subdivision)?.name || subdivision}</b>}{city !== "all" && <b>{catalog.cities.find((item) => item.id === city)?.name || city}</b>}{timezone !== "all" && <b>{timezone}</b>}<button onClick={clearAll}>Clear all</button></div></aside>
+      <section className="browse-results"><div className="filter-strip"><button className={selected === "all" ? "active" : ""} onClick={() => select("all")}>All</button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => select(item.id)}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}</span></div><div className="availability-switch"><button className={catalogOrder === "ranked" ? "active" : ""} onClick={() => setCatalogOrder("ranked")}>Working first</button><button className={catalogOrder === "alphabetical" ? "active" : ""} onClick={() => setCatalogOrder("alphabetical")}>A–Z</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{visibleChannels.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE).map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>
   </div>;
 }
 
@@ -1108,6 +1202,7 @@ function Player({
         <span>{source?.quality || channelQuality(channel)}</span>
         {channel.categories.map((item) => <span key={item}>{titleCase(item)}</span>)}
         {(source?.label || source?.title) && <span>{source.label || source.title}</span>}
+        {source?.provenance && <span>{source.provenance}</span>}
       </div>
       {channelWebsite && <button className="player-website" onClick={() => onOpenWebsite(channelWebsite, channel.name)}><ArrowSquareOut weight="bold" /> Open {new URL(channelWebsite).hostname.replace(/^www\./i, "")}</button>}
       {next && <div className="up-next"><Clock /><span><small>UP NEXT · {formatTime(new Date(next.start))}</small><strong>{next.title}</strong></span></div>}
