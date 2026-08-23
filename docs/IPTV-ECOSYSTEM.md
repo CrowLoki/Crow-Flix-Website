@@ -72,6 +72,10 @@ feeds. Unmatched entries become provenance-labelled channels rather than being
 discarded. Exact URL/header identities remain deduplicated.
 An exact source shared by multiple catalogues retains all contributor names;
 deduplication changes route count only and never erases lineage.
+Safe provider header values are retained exactly even when an upstream Referer
+uses a bare host. A verified source successor is additive: the known-dead route
+remains labelled and reachable in source details while ordering favours the
+current replacement.
 Current individually verified public fallbacks are tracked in source with an
 exact channel ID, distinct feed label, and provenance. They augment rather than
 replace upstream sources.

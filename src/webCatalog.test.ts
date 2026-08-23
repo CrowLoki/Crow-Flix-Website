@@ -144,6 +144,21 @@ describe("buildCatalogFromApi", () => {
     });
   });
 
+  it("preserves a safe bare Referer header exactly instead of erasing it", () => {
+    const catalog = buildCatalogFromApi(payload({
+      streams: [{
+        channel: null,
+        title: "Bare Referer",
+        url: "https://provider.test/live.m3u8",
+        referrer: "provider.test",
+      }],
+    }));
+    expect(catalog.channels[0].sources[0]).toMatchObject({
+      referrer: "provider.test",
+      requiresHeaders: true,
+    });
+  });
+
   it("keeps all external-only upstream records and adds the verified Advocate HLS route", () => {
     const externalStreams = [
       { channel: "AdvocateBroadcastingNetwork.ng", feed: "SD", title: "Advocate Broadcasting Network", url: "srt://105.113.54.98:4001" },
@@ -394,21 +409,29 @@ describe("Apsattv Amagi fallbacks", () => {
     }]);
 
     expect(repairKnownDeadAmagiSources(channels)).toBe(1);
-    expect(channels[0].sources).toHaveLength(1);
+    expect(channels[0].sources).toHaveLength(2);
     expect(channels[0].sources[0]).toMatchObject({
       url: ANI_ONE_CURRENT_URL,
       title: "Ani-Blast",
       quality: "720p",
     });
     expect(channels[0].url).toBe(ANI_ONE_CURRENT_URL);
-    expect(channels[0].sources.some((source) => source.url.startsWith(ANI_ONE_DEAD_URL))).toBe(false);
+    expect(channels[0].sources.find((source) => source.url.startsWith(ANI_ONE_DEAD_URL)))
+      .toMatchObject({ label: "Known-dead deployment" });
+    expect(channels[0].sources[0].provenance)
+      .toBe("CrowFlix verified Amagi replacement");
 
     const parsed = parseOptionalFastPlaylist(
       `#EXTM3U\n#EXTINF:-1,4065 Ani Blast\n${ANI_ONE_DEAD_URL}\n`,
     );
-    expect(parsed).toHaveLength(1);
+    expect(parsed).toHaveLength(2);
     expect(parsed[0].url).toBe(ANI_ONE_CURRENT_URL);
-    expect(parsed[0].provenance).toBe("Apsattv public FAST playlist");
+    expect(parsed[0].provenance).toBe("CrowFlix verified Amagi replacement");
+    expect(parsed[1]).toMatchObject({
+      url: ANI_ONE_DEAD_URL,
+      provenance: "Apsattv public FAST playlist",
+      label: "Known-dead deployment",
+    });
   });
 
   it("preserves regional metadata, rejects title collisions, and deduplicates", () => {

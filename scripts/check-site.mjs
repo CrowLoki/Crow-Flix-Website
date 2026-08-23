@@ -135,7 +135,7 @@ for (const value of ["streamGuidesJson", "32 * 1024 * 1024", "australianGuideSou
 }
 
 const webCatalog = await readFile(path.join(repositoryRoot, "src", "webCatalog.ts"), "utf8");
-for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "AdvocateBroadcastingNetwork.ng", "viewmedia7219.bozztv.com", "overlayAmagiFastFallbacks", "overlayVerifiedPublicFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "loadAdditivePlaylists", "overlayAdditivePlaylists", "normalizeStreamUrl", "EXTERNAL_PLAYER_PROTOCOLS", "provenances", "regional/provider playlists", "verified public fallbacks", "recent source health", "current FAST fallbacks", "crowflix-catalog-v6", "ownerCounts", "networkCounts", "feedCounts", "providerCounts", 'fetchJson<ApiSubdivision[]>("subdivisions")', 'fetchJson<ApiCity[]>("cities")', 'fetchJson<ApiTimezone[]>("timezones")']) {
+for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "AdvocateBroadcastingNetwork.ng", "viewmedia7219.bozztv.com", "overlayAmagiFastFallbacks", "overlayVerifiedPublicFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "loadAdditivePlaylists", "overlayAdditivePlaylists", "normalizeStreamUrl", "EXTERNAL_PLAYER_PROTOCOLS", "provenances", "Known-dead deployment", "CrowFlix verified Amagi replacement", "Referer is a request-header value", "regional/provider playlists", "verified public fallbacks", "recent source health", "current FAST fallbacks", "crowflix-catalog-v7", "ownerCounts", "networkCounts", "feedCounts", "providerCounts", 'fetchJson<ApiSubdivision[]>("subdivisions")', 'fetchJson<ApiCity[]>("cities")', 'fetchJson<ApiTimezone[]>("timezones")']) {
   assert(webCatalog.includes(value), `Catalogue fallback repair is missing: ${value}`);
 }
 

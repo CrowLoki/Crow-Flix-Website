@@ -1458,7 +1458,7 @@ function ChannelDetails({ channel, now, next, favourite, onPlay, onFavourite, on
         <div><h3>Playback sources</h3><span>{sources.length.toLocaleString()} preserved routes before browser delivery fallbacks</span></div>
         {sources.map((source, index) => <article key={sourceIdentifier(source, index)}>
           <span><strong>{sourceProvenances(source).join(" + ") || source.title || source.label || `Source ${index + 1}`}</strong><small>{sourceHostname(source)}</small></span>
-          <div>{source.quality && <b>{source.quality}</b>}<b>{(source.transport || source.transportHint || "unknown").toUpperCase()}</b><b>{sourceProtocol(source)}</b>{source.requiresHeaders && <b>Provider headers</b>}</div>
+          <div>{source.quality && <b>{source.quality}</b>}{source.label && <b>{source.label}</b>}<b>{(source.transport || source.transportHint || "unknown").toUpperCase()}</b><b>{sourceProtocol(source)}</b>{source.requiresHeaders && <b>Provider headers</b>}</div>
         </article>)}
       </section>
       <div className="channel-details-actions">

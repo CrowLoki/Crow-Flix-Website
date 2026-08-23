@@ -25,8 +25,8 @@ import {
   streamSourceHealthIdentity,
 } from "./streamHealthIndex";
 
-export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v6";
-export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v6";
+export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v7";
+export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v7";
 export const MAIN_FEED_OPTION_ID = "__main__";
 const WEB_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
 const API_BASE = "https://iptv-org.github.io/api";
@@ -266,8 +266,10 @@ function normalizeStreamUrl(value: string): [string, boolean] | null {
 function normalizeReferrer(value?: string | null): string | null {
   const text = normalizePlainText(value, 2_048);
   if (!text || !/^[\x00-\x7F]*$/.test(text)) return null;
-  const normalized = normalizeHttpUrl(text);
-  return normalized ? normalized[0] : null;
+  // Referer is a request-header value, not a fetch target. Some public
+  // playlists intentionally publish a bare host; preserve it exactly after
+  // length/control/ASCII validation rather than erasing the source identity.
+  return text;
 }
 
 function streamTransport(url: string): TransportHint {
@@ -298,7 +300,7 @@ export function qualityHeight(quality?: string | null): number {
   return Number.isFinite(height) && height >= 100 && height <= 4_320 ? height : 0;
 }
 
-type SourceAvailability = "normal" | "part-time" | "geo-blocked";
+type SourceAvailability = "normal" | "part-time" | "geo-blocked" | "unavailable";
 
 function labelWords(label: string): string[] {
   return label.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -307,6 +309,7 @@ function labelWords(label: string): string[] {
 function sourceAvailability(label?: string | null): SourceAvailability {
   if (!label) return "normal";
   const words = labelWords(label);
+  if (words.includes("known") && words.includes("dead")) return "unavailable";
   const isGeoBlocked = words.some((word, index) =>
     word === "geo"
     && words[index + 1] === "blocked"
@@ -332,7 +335,8 @@ function sourcePreferenceScore(source: StreamSource, now = Date.now()): number {
     : source.isHttps ? 4_000 : 1_000;
   const qualityScore = Math.min(Math.floor(qualityHeight(source.quality) / 60), 72);
   const availabilityScore = sourceAvailability(source.label) === "normal" ? 2_000
-    : sourceAvailability(source.label) === "part-time" ? 1_000 : 0;
+    : sourceAvailability(source.label) === "part-time" ? 1_000
+      : sourceAvailability(source.label) === "unavailable" ? -5_000 : 0;
   const healthScore = !isFreshCatalogHealth(source.catalogHealth, now) ? 20_000
     : source.catalogHealth.status === "online" && sourceUsesLiteralIp(source)
       ? 15_000 + source.catalogHealth.score * 5
@@ -647,31 +651,37 @@ function knownDeadAmagiReplacement(value: string): string | null {
     : null;
 }
 
-function repairedAmagiSource(source: StreamSource): StreamSource | null {
+const AMAGI_REPLACEMENT_PROVENANCE = "CrowFlix verified Amagi replacement";
+
+function normalizedAmagiSources(source: StreamSource): StreamSource[] {
   const replacement = knownDeadAmagiReplacement(source.url);
-  if (!replacement) return makeStreamSource(
+  const original = makeStreamSource(
     source.title ?? null,
     source.url,
     source.referrer,
     source.userAgent,
     source.quality,
-    source.label,
+    replacement
+      ? [source.label, "Known-dead deployment"].filter(Boolean).join(" · ")
+      : source.label,
     source.provenance,
     source.provenances,
   );
-  return makeStreamSource(
+  if (!original) return [];
+  if (!replacement) return [original];
+  const current = makeStreamSource(
     source.title ?? null,
     replacement,
     source.referrer,
     source.userAgent,
     source.quality,
     source.label,
-    source.provenance,
-    source.provenances,
+    AMAGI_REPLACEMENT_PROVENANCE,
   );
+  return current ? [current, original] : [original];
 }
 
-/** Replace the one verified-dead Ani-One deployment without retaining it. */
+/** Add the verified successor while retaining the exact published dead route. */
 export function repairKnownDeadAmagiSources(channels: WebChannel[]): number {
   let repaired = 0;
   for (const channel of channels) {
@@ -679,10 +689,10 @@ export function repairKnownDeadAmagiSources(channels: WebChannel[]): number {
     channel.sources = [];
     for (const source of sources) {
       const replacement = knownDeadAmagiReplacement(source.url);
-      const normalized = repairedAmagiSource(source);
-      if (!normalized) continue;
       if (replacement) repaired += 1;
-      addSource(channel, normalized);
+      for (const normalized of normalizedAmagiSources(source)) {
+        addSource(channel, normalized);
+      }
     }
     sortAndSyncSources(channel);
   }
@@ -719,13 +729,13 @@ export function parseOptionalFastPlaylist(content: string): StreamSource[] {
     playableEntries += 1;
     if (playableEntries > MAX_OPTIONAL_FAST_PLAYLIST_ENTRIES) return [];
     const rawUrl = line.split("|", 1)[0].trim();
-    const source = repairedAmagiSource({
+    const normalized = normalizedAmagiSources({
       title: pendingTitle,
       url: rawUrl,
       provenance: "Apsattv public FAST playlist",
     });
     pendingTitle = null;
-    if (source) sources.push(source);
+    sources.push(...normalized);
   }
 
   return sources;
@@ -741,15 +751,15 @@ export function overlayAmagiFastFallbacks(
 ): number {
   const fallbacksByIdentity = new Map<string, StreamSource[]>();
   for (const rawSource of rawFallbackSources) {
-    const source = repairedAmagiSource(rawSource);
-    if (!source) continue;
-    const identity = amagiProviderChannelIdentity(source.url);
-    if (!identity) continue;
-    const candidates = fallbacksByIdentity.get(identity) ?? [];
-    const existing = candidates.find((candidate) => candidate.id === source.id);
-    if (existing) mergeSource(existing, source);
-    else candidates.push(source);
-    fallbacksByIdentity.set(identity, candidates);
+    for (const source of normalizedAmagiSources(rawSource)) {
+      const identity = amagiProviderChannelIdentity(source.url);
+      if (!identity) continue;
+      const candidates = fallbacksByIdentity.get(identity) ?? [];
+      const existing = candidates.find((candidate) => candidate.id === source.id);
+      if (existing) mergeSource(existing, source);
+      else candidates.push(source);
+      fallbacksByIdentity.set(identity, candidates);
+    }
   }
   for (const candidates of fallbacksByIdentity.values()) candidates.sort(compareSources);
 
