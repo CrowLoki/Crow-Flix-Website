@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import Hls from "hls.js";
+import type Hls from "hls.js";
 import type { MediaPlayerClass } from "dashjs";
 import { createTauriHlsLoader } from "./TauriHlsLoader";
 import { installNativeDashTransport } from "./dashTransport";
@@ -356,94 +356,115 @@ export class PlaybackRun {
     addVideoListener("ended", onMediaError);
     cleanupTasks.push(() => stallWatchdog.stop());
 
-    if (kind === "hls" && Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        backBufferLength: 30,
-        manifestLoadPolicy: {
-          default: {
-            maxTimeToFirstByteMs: MANIFEST_FIRST_BYTE_TIMEOUT_MS,
-            maxLoadTimeMs: MANIFEST_LOAD_TIMEOUT_MS,
-            timeoutRetry: null,
-            errorRetry: null,
-          },
-        },
-        playlistLoadPolicy: {
-          default: {
-            maxTimeToFirstByteMs: MANIFEST_FIRST_BYTE_TIMEOUT_MS,
-            maxLoadTimeMs: MANIFEST_LOAD_TIMEOUT_MS,
-            timeoutRetry: null,
-            errorRetry: null,
-          },
-        },
-        loader: createTauriHlsLoader(source),
-      });
-      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-        startupMilestone = "the browser media engine";
-        if (this.isActive(token)) hls?.loadSource(source.url);
-      });
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        startupMilestone = "a parsed stream manifest";
-        attemptPlay();
-      });
-      hls.on(Hls.Events.FRAG_LOADED, () => {
-        startupMilestone = "downloaded media segments";
-      });
-      hls.on(Hls.Events.FRAG_DECRYPTED, () => {
-        startupMilestone = "decrypted media segments";
-      });
-      hls.on(Hls.Events.FRAG_PARSED, () => {
-        startupMilestone = "parsed audio/video segments";
-      });
-      hls.on(Hls.Events.BUFFER_CODECS, () => {
-        startupMilestone = "detected browser codecs";
-      });
-      hls.on(Hls.Events.BUFFER_APPENDED, () => {
-        startupMilestone = "buffered browser media";
-      });
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (!this.isActive(token) || !data.fatal) return;
+    if (kind === "hls") {
+      const useNativeHls = () => {
         if (
-          data.type === Hls.ErrorTypes.NETWORK_ERROR
-          && !isManifestNetworkFailure(data.details)
-          && !networkRecoveryUsed
-        ) {
-          networkRecoveryUsed = true;
-          this.publish("loading", "Retrying this source…");
-          hls?.startLoad();
+          sourceNeedsHeaders(source)
+          || !this.video.canPlayType("application/vnd.apple.mpegurl")
+        ) return false;
+        this.video.src = source.url;
+        this.video.load();
+        return true;
+      };
+      void import("hls.js").then(({ default: HlsRuntime }) => {
+        if (!this.isActive(token)) return;
+        if (!HlsRuntime.isSupported()) {
+          if (!useNativeHls()) {
+            this.fail(
+              token,
+              source,
+              kind,
+              "unsupported",
+              "This HLS source needs playback support that is unavailable on this device.",
+              { phase: "protocol" },
+            );
+          }
           return;
         }
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecoveryUsed) {
-          mediaRecoveryUsed = true;
-          this.publish("loading", "Recovering this source…");
-          hls?.recoverMediaError();
-          return;
-        }
-        const failure = describeHlsFailure(data, hasPlayed, source);
-        this.fail(token, source, kind, failure.reason, failure.message, failure);
-      });
-      hls.attachMedia(this.video);
-      cleanupTasks.push(() => {
-        hls?.stopLoad();
-        hls?.detachMedia();
-        hls?.destroy();
-        hls = null;
-      });
-    } else if (kind === "hls") {
-      if (sourceNeedsHeaders(source) || !this.video.canPlayType("application/vnd.apple.mpegurl")) {
+        hls = new HlsRuntime({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 30,
+          manifestLoadPolicy: {
+            default: {
+              maxTimeToFirstByteMs: MANIFEST_FIRST_BYTE_TIMEOUT_MS,
+              maxLoadTimeMs: MANIFEST_LOAD_TIMEOUT_MS,
+              timeoutRetry: null,
+              errorRetry: null,
+            },
+          },
+          playlistLoadPolicy: {
+            default: {
+              maxTimeToFirstByteMs: MANIFEST_FIRST_BYTE_TIMEOUT_MS,
+              maxLoadTimeMs: MANIFEST_LOAD_TIMEOUT_MS,
+              timeoutRetry: null,
+              errorRetry: null,
+            },
+          },
+          loader: createTauriHlsLoader(source),
+        });
+        hls.on(HlsRuntime.Events.MEDIA_ATTACHED, () => {
+          startupMilestone = "the browser media engine";
+          if (this.isActive(token)) hls?.loadSource(source.url);
+        });
+        hls.on(HlsRuntime.Events.MANIFEST_PARSED, () => {
+          startupMilestone = "a parsed stream manifest";
+          attemptPlay();
+        });
+        hls.on(HlsRuntime.Events.FRAG_LOADED, () => {
+          startupMilestone = "downloaded media segments";
+        });
+        hls.on(HlsRuntime.Events.FRAG_DECRYPTED, () => {
+          startupMilestone = "decrypted media segments";
+        });
+        hls.on(HlsRuntime.Events.FRAG_PARSED, () => {
+          startupMilestone = "parsed audio/video segments";
+        });
+        hls.on(HlsRuntime.Events.BUFFER_CODECS, () => {
+          startupMilestone = "detected browser codecs";
+        });
+        hls.on(HlsRuntime.Events.BUFFER_APPENDED, () => {
+          startupMilestone = "buffered browser media";
+        });
+        hls.on(HlsRuntime.Events.ERROR, (_event, data) => {
+          if (!this.isActive(token) || !data.fatal) return;
+          if (
+            data.type === HlsRuntime.ErrorTypes.NETWORK_ERROR
+            && !isManifestNetworkFailure(data.details)
+            && !networkRecoveryUsed
+          ) {
+            networkRecoveryUsed = true;
+            this.publish("loading", "Retrying this source…");
+            hls?.startLoad();
+            return;
+          }
+          if (data.type === HlsRuntime.ErrorTypes.MEDIA_ERROR && !mediaRecoveryUsed) {
+            mediaRecoveryUsed = true;
+            this.publish("loading", "Recovering this source…");
+            hls?.recoverMediaError();
+            return;
+          }
+          const failure = describeHlsFailure(data, hasPlayed, source);
+          this.fail(token, source, kind, failure.reason, failure.message, failure);
+        });
+        hls.attachMedia(this.video);
+        cleanupTasks.push(() => {
+          hls?.stopLoad();
+          hls?.detachMedia();
+          hls?.destroy();
+          hls = null;
+        });
+      }).catch(() => {
+        if (!this.isActive(token) || useNativeHls()) return;
         this.fail(
           token,
           source,
           kind,
           "unsupported",
-          "This HLS source needs playback support that is unavailable on this device.",
+          "The HLS player could not be loaded on this browser.",
           { phase: "protocol" },
         );
-        return;
-      }
-      this.video.src = source.url;
-      this.video.load();
+      });
     } else if (kind === "dash") {
       void import("dashjs").then((dashModule) => {
         if (!this.isActive(token)) return;

@@ -94,9 +94,10 @@ for (const value of ["browserPreflightRoutes", "runPreflightQueue", "verifyHlsMe
 }
 
 const playbackController = await readFile(path.join(repositoryRoot, "src", "playback", "usePlaybackController.ts"), "utf8");
-for (const value of ["reorderRemainingSources", "orderSourcesByPreflight", "Trying the next playback route"]) {
+for (const value of ['import("hls.js")', 'import("dashjs")', "reorderRemainingSources", "orderSourcesByPreflight", "Trying the next playback route"]) {
   assert(playbackController.includes(value), `Dynamic playback failover is missing: ${value}`);
 }
+assert(!/^import Hls from "hls\.js";/m.test(playbackController), "HLS.js is still bundled into initial page startup");
 assert(!app.includes("Download Crow-Flix for Windows"), "The browser app was replaced by a desktop download page");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/PRIVACY.md"), "The About page does not link to the website privacy notice");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/SECURITY.md"), "The About page does not link to the website security policy");
@@ -148,6 +149,12 @@ assert(builtIndex.includes(`${canonicalOrigin}/`), "Built index has the wrong ca
 assert(/<script[^>]+type="module"[^>]+src="\/assets\/[^"]+\.js"/.test(builtIndex), "Built index has no Vite module bundle");
 assert(/<link[^>]+rel="stylesheet"[^>]+href="\/assets\/[^"]+\.css"/.test(builtIndex), "Built index has no Vite stylesheet bundle");
 assert(!builtIndex.includes("crow-flix.pages.dev"), "Built index uses the infrastructure hostname as public identity");
+
+const mainScript = builtIndex.match(/<script[^>]+type="module"[^>]+src="(\/assets\/[^"]+\.js)"/)?.[1];
+assert(mainScript, "Built index does not identify its main module bundle");
+const mainScriptDetails = await stat(path.join(distRoot, mainScript.replace(/^\//, "")));
+assert(mainScriptDetails.size <= 500 * 1024, `Initial JavaScript exceeds 500 KiB: ${mainScriptDetails.size} bytes`);
+assert(files.some((file) => /[\\/]hls-[^\\/]+\.js$/i.test(file)), "The production build has no lazy HLS.js chunk");
 
 for (const match of builtIndex.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)) {
   const target = path.join(distRoot, match[1].replace(/^\//, ""));

@@ -17,11 +17,12 @@ type MockHlsInstance = {
 
 const hlsState = vi.hoisted(() => ({
   instances: [] as MockHlsInstance[],
+  supported: true,
 }));
 
 vi.mock("hls.js", () => {
   class MockHls {
-    static isSupported = () => true;
+    static isSupported = () => hlsState.supported;
     static Events = {
       MEDIA_ATTACHED: "hlsMediaAttached",
       MANIFEST_PARSED: "hlsManifestParsed",
@@ -83,6 +84,7 @@ function memoryStorage(): Storage {
 describe("PlaybackRun retry", () => {
   beforeEach(() => {
     hlsState.instances.length = 0;
+    hlsState.supported = true;
   });
 
   afterEach(() => {
@@ -192,6 +194,7 @@ describe("PlaybackRun retry", () => {
     }, video, (state) => updates.push(state));
 
     run.start();
+    await vi.waitFor(() => expect(hlsState.instances).toHaveLength(1));
     const primary = hlsState.instances[0];
     primary?.handlers.get("hlsMediaAttached")?.("hlsMediaAttached");
     storage.setItem("crowflix:source-preflight:v1", JSON.stringify({
@@ -287,6 +290,7 @@ describe("PlaybackRun retry", () => {
     );
 
     run.start();
+    await vi.waitFor(() => expect(hlsState.instances).toHaveLength(1));
     const primary = hlsState.instances[0];
     primary?.handlers.get("hlsMediaAttached")?.("hlsMediaAttached");
     const onError = primary?.handlers.get("hlsError");
@@ -322,7 +326,7 @@ describe("PlaybackRun retry", () => {
 
     expect(primary.loadSource).toHaveBeenCalledOnce();
     expect(primary.startLoad).not.toHaveBeenCalled();
-    expect(hlsState.instances).toHaveLength(2);
+    await vi.waitFor(() => expect(hlsState.instances).toHaveLength(2));
     expect(updates[updates.length - 1]).toMatchObject({
       status: "switching",
       source: { id: "backup" },
@@ -334,7 +338,7 @@ describe("PlaybackRun retry", () => {
     run.dispose();
   });
 
-  it("uses startLoad for a first fatal post-manifest network error", () => {
+  it("uses startLoad for a first fatal post-manifest network error", async () => {
     const storage = memoryStorage();
     vi.stubGlobal("localStorage", storage);
     const video = {
@@ -360,6 +364,7 @@ describe("PlaybackRun retry", () => {
     );
 
     run.start();
+    await vi.waitFor(() => expect(hlsState.instances).toHaveLength(1));
     const primary = hlsState.instances[0];
     primary?.handlers.get("hlsMediaAttached")?.("hlsMediaAttached");
     const onError = primary?.handlers.get("hlsError");
@@ -373,6 +378,37 @@ describe("PlaybackRun retry", () => {
     expect(primary.loadSource).toHaveBeenCalledOnce();
     expect(primary.startLoad).toHaveBeenCalledOnce();
     expect(storage.getItem("crowflix:source-health:v1")).toBeNull();
+    run.dispose();
+  });
+
+  it("uses native HLS when the lazy HLS.js runtime is unsupported", async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    hlsState.supported = false;
+    const video = {
+      src: "",
+      currentTime: 0,
+      ended: false,
+      addEventListener: vi.fn(),
+      canPlayType: vi.fn(() => "maybe"),
+      load: vi.fn(),
+      pause: vi.fn(),
+      play: vi.fn(async () => undefined),
+      removeAttribute: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLVideoElement;
+    const run = new PlaybackRun({
+      key: "native-hls",
+      name: "Native HLS",
+      sources: [{ id: "native", url: "https://provider.test/native.m3u8" }],
+    }, video, vi.fn());
+
+    run.start();
+    await vi.waitFor(() => expect(video.load).toHaveBeenCalledOnce());
+
+    expect(video.src).toBe("https://provider.test/native.m3u8");
+    expect(video.canPlayType).toHaveBeenCalledWith("application/vnd.apple.mpegurl");
+    expect(hlsState.instances).toHaveLength(0);
     run.dispose();
   });
 });
