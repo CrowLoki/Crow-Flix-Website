@@ -87,8 +87,9 @@ requests can include:
 
 - the visitor IP address and request time;
 - the requested relay route;
-- guide country, browser timezone, channel identifiers, and public channel names
-  needed to match provider XMLTV identifiers;
+- guide country, browser timezone, channel identifiers, public channel names,
+  and known public provider programme aliases needed to match provider XMLTV
+  identifiers;
 - media target information;
 - a public personal playlist or XMLTV URL explicitly supplied by the visitor;
 - provider-requested User-Agent or Referer values where required; and

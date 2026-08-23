@@ -40,6 +40,7 @@ export type RelayGuideResult = {
 export type RelayGuideChannel = {
   id: string;
   names: string[];
+  aliases?: string[];
 };
 
 const REQUEST_TIMEOUT_MS = 90_000;

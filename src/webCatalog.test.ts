@@ -330,6 +330,7 @@ describe("additive regional/provider playlists", () => {
       "https://provider.test/seven.m3u8",
     );
     expect(seven.provenance).toContain(config.name);
+    expect(seven.epgAliases).toContain("mjh-seven-bri");
     const added = catalog.channels.find((channel) => channel.name === "New Brisbane Channel")!;
     expect(added).toMatchObject({
       country: "AU",
@@ -337,6 +338,7 @@ describe("additive regional/provider playlists", () => {
       timezones: ["Australia/Brisbane"],
       network: "i.mjh.nz",
       provenance: [config.name],
+      epgAliases: ["mjh-new-channel"],
     });
     expect(added.sources[0]).toMatchObject({ provenance: config.name });
   });

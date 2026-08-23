@@ -131,6 +131,7 @@ async function handleEpg(
   let channelIds = (url.searchParams.get("ids") ?? "").split(",");
   let timeZone = url.searchParams.get("tz") ?? "";
   const namesByChannel = new Map<string, string[]>();
+  const aliasesByProviderId = new Map<string, string>();
   if (request.method === "POST") {
     if (!request.body) throw new RelayError(400, "Provide a guide request body.");
     const { data, truncated } = await readBounded(
@@ -165,6 +166,17 @@ async function handleEpg(
         }).slice(0, 12)
         : [];
       if (names.length) namesByChannel.set(channel.id, names);
+      const aliases = Array.isArray(channel.aliases)
+        ? channel.aliases.filter((alias): alias is string => {
+          return typeof alias === "string" && alias.length > 0 && alias.length <= 256;
+        }).slice(0, 12)
+        : [];
+      for (const alias of aliases) {
+        const existing = aliasesByProviderId.get(alias);
+        if (!existing || existing === channel.id) {
+          aliasesByProviderId.set(alias, channel.id);
+        }
+      }
     }
   }
   const result = await loadAutoEpg(
@@ -173,6 +185,7 @@ async function handleEpg(
     fetch,
     timeZone,
     namesByChannel,
+    aliasesByProviderId,
   );
   // Every browser guide request must reach this handler so its one-time
   // Turnstile token is verified. Upstream guide caching belongs inside the

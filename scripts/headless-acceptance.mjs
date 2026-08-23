@@ -158,7 +158,7 @@ try {
         && !home.includes('Live news')
         && !home.includes('Live sports');
     })(),
-    halfSizeClawCursor: getComputedStyle(document.documentElement).cursor.includes('/cursors/32/normal.png'),
+    enlargedClawCursor: getComputedStyle(document.documentElement).cursor.includes('/cursors/40/normal.png'),
     desktopDownload: document.body.innerText.includes('Download Crow-Flix for Windows'),
     status: document.querySelector('.status-bar')?.innerText || ''
   })`);
@@ -250,7 +250,7 @@ try {
   const playerStayedOpen = await evaluate("Boolean(document.querySelector('.player'))");
 
   const assertions = {
-    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.halfSizeClawCursor && !home.desktopDownload,
+    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.enlargedClawCursor && !home.desktopDownload,
     fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy && live.preferredOrder,
     noBackgroundStreamProbing: backgroundStreamRequests.length === 0,
     detailsDialog: details.channelId && details.sources && details.providers,

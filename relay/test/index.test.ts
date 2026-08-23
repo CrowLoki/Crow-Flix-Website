@@ -190,6 +190,62 @@ describe("worker input validation (no network is touched)", () => {
       title: "Toronto News",
     })]);
   });
+
+  it("/epg maps a bounded provider-id alias onto the CrowFlix channel id", async () => {
+    const guideUrl = "https://guides.example/provider.xml";
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const href = input instanceof Request ? input.url : input.toString();
+      if (href.includes("/turnstile/v0/siteverify")) {
+        return new Response(JSON.stringify({
+          success: true,
+          hostname: "crowflix.tv",
+          action: "epg_load",
+        }), { status: 200 });
+      }
+      if (href === "https://iptv-org.github.io/api/guides.json") {
+        return new Response(JSON.stringify([
+          { channel: "Channel7.au", sources: [{ url: guideUrl }] },
+        ]), { status: 200 });
+      }
+      if (href === guideUrl) {
+        return new Response(`<tv><programme start="20260823120000 +0000" stop="20260823130000 +0000" channel="mjh-seven-bri"><title>Real programme</title></programme></tv>`, { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const response = await worker.fetch(new Request(
+      "https://relay.example/epg",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Turnstile-Token": "verified-token",
+        },
+        body: JSON.stringify({
+          country: "AU",
+          timeZone: "Australia/Brisbane",
+          channels: [{
+            id: "Channel7.au",
+            names: ["Channel 7", "Seven"],
+            aliases: ["mjh-seven-bri"],
+          }],
+        }),
+      },
+    ), {
+      TURNSTILE_SECRET: "test-secret",
+      TURNSTILE_ALLOWED_HOSTNAMES: "crowflix.tv",
+      TURNSTILE_EXPECTED_ACTION: "epg_load",
+    });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).programmes).toEqual([
+      expect.objectContaining({
+        channelId: "Channel7.au",
+        title: "Real programme",
+      }),
+    ]);
+  });
 });
 
 describe("stream relay transport", () => {
