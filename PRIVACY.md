@@ -23,8 +23,8 @@ The website stores the following data locally in browser storage:
 
 - favourite and recently opened channel identifiers;
 - user-managed Web Library destinations;
-- source-health, cooldown, preferred-source, and short-lived source-readiness
-  results used for playback failover and catalogue ranking; and
+- source-health, cooldown, and preferred-source results created only while a
+  visitor is playing a selected channel; and
 - cached catalogue metadata used for faster startup and stale-on-failure
   fallback.
 
@@ -52,7 +52,6 @@ Depending on the feature used, the website can connect to:
   hint for exact IPTV-org source identities;
 - channel-logo and artwork hosts;
 - media hosts and content-delivery networks listed by the catalogue;
-- a bounded readiness check for a small set of currently relevant channels;
 - external Web Library destinations opened by the visitor;
 - the Crow-Flix relay for programme guides and media that an HTTPS browser
   cannot load directly, including HTTP, CORS-blocked, redirected, byte-range,
@@ -64,12 +63,15 @@ Depending on the feature used, the website can connect to:
 External providers apply their own availability, geographic, account, storage,
 and privacy rules. Crow-Flix does not bypass those restrictions.
 
-The readiness check uses at most three concurrent requests and caches a route
-result for 15 minutes. Live TV sequentially checks up to two source identities
-per channel on the currently visible 48-card page and stops at the first ready
-route; other views use a smaller channel window. It reads only bounded manifest data and the key, initialization data, or first media
-bytes needed to determine whether playback can start. It does not play or
-download a complete programme in the background.
+CrowFlix does not probe or preload individual channel streams while a visitor
+browses the catalogue, Guide, favourites, or Free Collection. Media and
+playback-route requests begin only after the visitor selects **Watch live** for
+that channel. The player may then try that selected channel's preserved routes
+until one starts or the available routes are exhausted.
+
+The CrowFlix Free Collection stores direct links to original publisher pages.
+CrowFlix does not load those pages, YouTube video, or their artwork until the
+visitor explicitly presses **Open website** for that collection entry.
 
 The optional health index is downloaded as a bounded compressed static file.
 CrowFlix does not send searches, favourites, recent channels, Web Library data,

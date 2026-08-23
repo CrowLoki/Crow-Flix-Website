@@ -182,6 +182,20 @@ try {
   })`);
   await evaluate("document.querySelector('.source-dialog .dialog-close')?.click()");
   await waitFor("!document.querySelector('.source-dialog')");
+  await evaluate(`[...document.querySelectorAll('.topbar nav button')].find((button) => button.textContent.includes('CrowFlix Free'))?.click()`);
+  await waitFor("document.querySelector('.web-library h1')?.textContent.includes('CrowFlix Free Collection')");
+  const freeCollection = await evaluate(`(() => {
+    const card = [...document.querySelectorAll('.web-card')].find((item) => item.textContent.includes('Gundaminfo'));
+    return {
+      heading: document.querySelector('.web-library h1')?.textContent || '',
+      officialCategory: [...document.querySelectorAll('.web-category-strip button')].some((button) => button.textContent.includes('CrowFlix Free Collection')),
+      officialCard: Boolean(card),
+      brandedCuration: card?.innerText.toLocaleLowerCase().includes('crowflix free collection') || false,
+      originalPublisherNotice: card?.innerText.includes('original official publisher page') || false
+    };
+  })()`);
+  await evaluate(`[...document.querySelectorAll('.topbar nav button')].find((button) => button.textContent.includes('Live TV'))?.click()`);
+  await waitFor("document.querySelectorAll('.browse-results .channel-card').length === 48");
   await evaluate("document.querySelector('.browse-results .card-main')?.click()");
   await waitFor("Boolean(document.querySelector('.player'))");
   const player = await evaluate(`({
@@ -219,13 +233,14 @@ try {
     noBackgroundStreamProbing: backgroundStreamRequests.length === 0,
     detailsDialog: details.channelId && details.sources && details.providers,
     personalSourcesDialog: sourceDialog.playlist && sourceDialog.guide,
+    crowFlixFreeCollection: freeCollection.heading === 'CrowFlix Free Collection' && freeCollection.officialCategory && freeCollection.officialCard && freeCollection.brandedCuration && freeCollection.originalPublisherNotice,
     playerControls: player.customControls && player.nativeControlsRemoved && player.settingsButton && player.guideButton && player.subtitleButton && player.fullscreenButton,
     subtitleMenu: subtitleMenu.off && subtitleMenu.honestUnavailable,
     miniGuide: miniGuide.search && miniGuide.channels > 0 && miniGuide.previous && miniGuide.next,
     escapeClosesOverlayOnly: playerStayedOpen,
   };
   if (Object.values(assertions).some((value) => !value)) {
-    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, live, backgroundStreamRequests, details, sourceDialog, player, subtitleMenu, miniGuide })}`);
+    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, live, backgroundStreamRequests, details, sourceDialog, freeCollection, player, subtitleMenu, miniGuide })}`);
   }
   console.log(JSON.stringify({
     ok: true,

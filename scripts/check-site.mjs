@@ -34,6 +34,7 @@ for (const file of [
   "src/App.tsx",
   "src/App.css",
   "src/webCatalog.ts",
+  "src/officialFreeCollection.ts",
   "src/additivePlaylists.ts",
   "src/catalogMetadata.ts",
   "src/guideNavigation.ts",
@@ -47,6 +48,7 @@ for (const file of [
   "relay/src/turnstile.ts",
   "RECOVERY-PROVENANCE.json",
   "docs/IPTV-ECOSYSTEM.md",
+  "docs/OFFICIAL-FREE-COLLECTION.md",
   "dist/index.html",
   "dist/_headers",
   "dist/_redirects",
@@ -91,7 +93,7 @@ for (const value of [
 }
 
 const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
-for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
+for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", "CrowFlix Free", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "Working first", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
 for (const value of ["runPreflightQueue(", "preflightSource(", "browserPreflightRoutes("]) {
@@ -108,6 +110,7 @@ assert(!app.includes("showAllCatalogued"), "Live TV still defaults to hiding cat
 assert(!app.includes("limited/offline hidden"), "Live TV still reports silently hidden channels");
 assert(!app.includes(".slice(0, 140)"), "The programme guide still hides channels behind a fixed row cap");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/PRIVACY.md"), "The About page does not link to the website privacy notice");
+assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/docs/OFFICIAL-FREE-COLLECTION.md"), "The About page does not link to the Free Collection policy");
 assert(app.includes("https://github.com/CrowLoki/Crow-Flix-Website/blob/main/SECURITY.md"), "The About page does not link to the website security policy");
 assert(!app.includes("A cinematic desktop IPTV player"), "The About page still identifies the website as the desktop app");
 
@@ -141,6 +144,16 @@ for (const value of ["raw-tv.m3u8", "MAX_ADDITIVE_PLAYLIST_BYTES", "MAX_ADDITIVE
 const personalSources = await readFile(path.join(repositoryRoot, "src", "personalSources.ts"), "utf8");
 for (const value of ["parsePersonalPlaylist", "mergePersonalPlaylistIntoCatalog", "parsePersonalXmltv", "parsePersonalXmltvFile", "MAX_PERSONAL_PLAYLIST_ENTRIES", "Personal M3U", "Personal XMLTV"]) {
   assert(personalSources.includes(value), `Personal browser source support is missing: ${value}`);
+}
+
+const officialFreeCollection = await readFile(path.join(repositoryRoot, "src", "officialFreeCollection.ts"), "utf8");
+for (const value of ["OFFICIAL_FREE_COLLECTION_DRAFTS", "Official Anime", "Official Movies", "Official Sport", "youtube.com"]) {
+  assert(officialFreeCollection.includes(value), `Official free collection is missing: ${value}`);
+}
+
+const officialFreePolicy = await readFile(path.join(repositoryRoot, "docs", "OFFICIAL-FREE-COLLECTION.md"), "utf8");
+for (const value of ["does not fetch, embed, cache, download, relay, copy, or redistribute", "original page", "CrowFlix remains the curator"]) {
+  assert(officialFreePolicy.includes(value), `Official free collection policy is missing: ${value}`);
 }
 
 const catalogMetadata = await readFile(path.join(repositoryRoot, "src", "catalogMetadata.ts"), "utf8");
@@ -207,7 +220,7 @@ assert(!headers.includes("script-src 'none'"), "_headers still disables the brow
 assert(!headers.includes("unsafe-eval"), "_headers permits unsafe-eval");
 
 const privacy = await readFile(path.join(repositoryRoot, "PRIVACY.md"), "utf8");
-for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "IPTV Nexus", "personal playlist or XMLTV URL", "does not attach search text", "clear site data for `crowflix.tv`"]) {
+for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "IPTV Nexus", "personal playlist or XMLTV URL", "does not attach search text", "does not probe or preload individual channel streams", "CrowFlix Free Collection", "clear site data for `crowflix.tv`"]) {
   assert(privacy.includes(value), `PRIVACY.md is missing: ${value}`);
 }
 

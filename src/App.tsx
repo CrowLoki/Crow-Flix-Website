@@ -543,7 +543,7 @@ export default function App() {
   useEffect(() => {
     if (skipInitialWebSave.current) {
       skipInitialWebSave.current = false;
-      return;
+      if (!initialWebLibrary.migrated) return;
     }
     const error = saveWebDestinations(localStorage, webDestinations);
     if (error) showToast(`Web Library could not be saved: ${error}`);
@@ -1024,7 +1024,7 @@ export default function App() {
         {view === "about" && <AboutView onOpen={(url, title) => void openWebsite(url, title)} />}
       </main>
       {view === "web"
-        ? <footer className="status-bar"><span><GlobeHemisphereWest weight="fill" /> {webDestinations.length.toLocaleString()} website destinations</span><span>Saved on this device · JSON backup available</span></footer>
+        ? <footer className="status-bar"><span><GlobeHemisphereWest weight="fill" /> {webDestinations.length.toLocaleString()} CrowFlix free and website destinations</span><span>Saved on this device · JSON backup available</span></footer>
         : view === "about"
           ? <footer className="status-bar"><span><Info weight="fill" /> CrowFlix 0.5.1</span><span>Copyright © 2026 Crow · AGPL-3.0-only</span></footer>
         : <footer className="status-bar"><span><Broadcast weight="fill" /> {catalog.channels.length.toLocaleString()} catalogued · {availabilitySummary.verified.toLocaleString()} live · {availabilitySummary.ready.toLocaleString()} ready · {sourceCount.toLocaleString()} sources</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
@@ -1038,7 +1038,7 @@ export default function App() {
 }
 
 function Header({ view, onView, query, onQuery, onSource, canAddSource }: { view: View; onView: (view: View) => void; query: string; onQuery: (value: string) => void; onSource: () => void; canAddSource: boolean }) {
-  const nav: Array<[View, string, React.ReactNode]> = [["home", "Home", <House />], ["live", "Live TV", <Broadcast />], ["guide", "Guide", <CalendarDots />], ["web", "Web Library", <GlobeHemisphereWest />], ["favourites", "My List", <Heart />], ["about", "About", <Info />]];
+  const nav: Array<[View, string, React.ReactNode]> = [["home", "Home", <House />], ["live", "Live TV", <Broadcast />], ["guide", "Guide", <CalendarDots />], ["web", "CrowFlix Free", <GlobeHemisphereWest />], ["favourites", "My List", <Heart />], ["about", "About", <Info />]];
   return <header className="topbar">
     <button className="brand" onClick={() => onView("home")}><img src={BRAND_ICON} alt="" /><span>CROW<strong>FLIX</strong></span></button>
     <nav>{nav.map(([id, label, icon]) => <button key={id} className={view === id ? "active" : ""} onClick={() => onView(id)}>{icon}<span>{label}</span></button>)}</nav>
@@ -1261,6 +1261,7 @@ function AboutView({ onOpen }: { onOpen: (url: string, title: string) => void })
     ["Software licence", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/LICENSE"],
     ["Licensing details", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/LICENSING.md"],
     ["Third-party notices", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/THIRD_PARTY_NOTICES.md"],
+    ["Free Collection policy", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/docs/OFFICIAL-FREE-COLLECTION.md"],
     ["Privacy", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/PRIVACY.md"],
     ["Security", "https://github.com/CrowLoki/Crow-Flix-Website/blob/main/SECURITY.md"],
   ] as const;
