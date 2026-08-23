@@ -42,6 +42,7 @@ for (const file of [
   "src/relayClient.ts",
   "src/TurnstileGuideGate.tsx",
   "src/playback/usePlaybackController.ts",
+  "scripts/headless-acceptance.mjs",
   "src/playback/preflightWindow.ts",
   "relay/src/index.ts",
   "relay/src/turnstile.ts",
@@ -67,6 +68,7 @@ assert(
   packageJson.repository?.url === "https://github.com/CrowLoki/Crow-Flix-Website.git",
   "package.json has the wrong repository",
 );
+assert(packageJson.scripts?.["acceptance:headless"] === "node scripts/headless-acceptance.mjs", "The headless browser acceptance command is missing");
 
 const provenance = JSON.parse(await readFile(path.join(repositoryRoot, "RECOVERY-PROVENANCE.json"), "utf8"));
 assert(

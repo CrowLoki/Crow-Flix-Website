@@ -47,6 +47,12 @@ builds the browser application, and validates the deployable `dist/` tree,
 canonical metadata, security headers, Crow brand assets, and common secret or
 workstation-path leaks.
 
+On a machine with Chrome or Edge installed, `npm run acceptance:headless`
+loads the deployed `crowflix.tv` application in an isolated, invisible browser
+profile; verifies the live catalogue, complete 48-card page, metadata/details,
+and personal-source dialog; closes the browser; and removes only that generated
+temporary profile. It never opens or reuses a visible browser tab.
+
 For local browser development:
 
 ```console
