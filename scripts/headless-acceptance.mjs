@@ -247,8 +247,25 @@ try {
   await waitFor("Boolean(document.querySelector('.crow-guide-bubble'))");
   const helper = await evaluate(`({
     localOnly: document.querySelector('.crow-guide-bubble')?.innerText.includes('stay on this device') || false,
-    suggested: Boolean(document.querySelector('.crow-guide-action'))
+    noExternalAi: document.querySelector('.crow-guide-bubble')?.innerText.includes('No external AI') || false,
+    search: Boolean(document.querySelector('.crow-guide-search input')),
+    quickActions: document.querySelectorAll('.crow-guide-quick button').length,
+    candidates: document.querySelectorAll('.crow-guide-result').length,
+    somethingElse: [...document.querySelectorAll('.crow-guide-actions button')].some((button) => button.textContent.includes('Something else'))
   })`);
+  await evaluate("document.querySelector('.crow-guide-search input')?.focus()");
+  await page.send("Input.insertText", { text: "movies" });
+  await evaluate("document.querySelector('.crow-guide-search')?.requestSubmit()");
+  await waitFor("document.querySelector('.crow-guide-answer')?.textContent.includes('matching')");
+  helper.usefulSearch = await evaluate(`(() => {
+    const results = [...document.querySelectorAll('.crow-guide-result')];
+    return results.length > 0
+      && results.every((item) => item.querySelector('.crow-guide-result-copy small')?.textContent.length > 10)
+      && results.every((item) => !['temporarily-offline', 'unsupported'].includes(item.dataset.availability));
+  })()`);
+  await evaluate(`[...document.querySelectorAll('.crow-guide-quick button')].find((button) => button.textContent.includes('On now'))?.click()`);
+  await waitFor("[...document.querySelectorAll('.crow-guide-actions button')].some((button) => button.textContent.includes('Load live guide'))");
+  helper.honestGuideFallback = await evaluate("document.querySelector('.crow-guide-answer')?.textContent.includes('do not have current programme listings') || false");
   await evaluate("document.querySelector('.crow-guide-bubble button[aria-label]')?.click()");
   await waitFor("!document.querySelector('.crow-guide-bubble')");
   await evaluate(`[...document.querySelectorAll('.topbar nav button')].find((button) => button.textContent.includes('Live TV'))?.click()`);
@@ -272,7 +289,17 @@ try {
     providers: document.body.innerText.includes('Source providers'),
     owners: document.body.innerText.includes('Owners'),
     fullCopy: document.body.innerText.includes('complete matching catalogue stays visible'),
-    preferredOrder: document.body.innerText.includes('Australia / US / English first')
+    preferredOrder: document.body.innerText.includes('Australia / US / English first'),
+    honestTotals: (() => {
+      const metrics = document.querySelector('.catalog-number');
+      const text = (metrics?.innerText || '').toLowerCase();
+      const channels = Number(metrics?.dataset.channelCount || 0);
+      const sources = Number(metrics?.dataset.sourceCount || 0);
+      return text.includes('stream sources')
+        && text.includes('catalogued channel/feed entries')
+        && channels > 12_000
+        && sources > channels;
+    })()
   })`);
   const backgroundStreamRequests = await evaluate(`performance.getEntriesByType('resource')
     .map((entry) => entry.name)
@@ -370,10 +397,10 @@ try {
 
   const assertions = {
     homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.enlargedClawCursor && home.helper && home.brandAccessible && !home.desktopDownload && home.headerFits && home.responsiveHeader.every((item) => item.fits),
-    crowGuide: helper.localOnly && helper.suggested,
+    crowGuide: helper.localOnly && helper.noExternalAi && helper.search && helper.quickActions === 3 && helper.candidates > 0 && helper.somethingElse && helper.usefulSearch && helper.honestGuideFallback,
     accountFoundation: accountSettings.anonymous && accountSettings.optional && accountSettings.honestFoundation && accountSettings.noDeadSignIn && accountSettings.reminder && accountSettings.initialFocus && accountSettings.historyBackClosed && accountSettings.historyForwardRestored && accountSettings.preferencePersisted && accountSettings.reloadPersisted && accountSettings.preferenceReset && accountSettings.escapeDismissed && accountSettings.focusReturned && accountSettings.exploreEntry,
     explorePopout: explore.title.includes('Explore') && explore.options > 1 && explore.overlay,
-    fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy && live.preferredOrder,
+    fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy && live.preferredOrder && live.honestTotals,
     noBackgroundStreamProbing: backgroundStreamRequests.length === 0,
     hoverPreview: hoverPreview.muted && hoverPreview.label.length > 0,
     detailsDialog: details.channelId && details.sources && details.providers,

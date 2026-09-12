@@ -8,6 +8,16 @@ browser. The application includes search, categories, regions, favourites,
 recent channels, programme guides, source failover, HLS and MPEG-DASH playback,
 hardware-style zapping, and the user-managed Web Library.
 
+The Live TV total distinguishes stream sources from deduplicated logical
+channel/feed entries. Alternate routes are retained for failover and source
+choice without being mislabelled as additional channels.
+
+Baby CrowBot is a local catalogue helper rather than an external chatbot. It
+can search by channel, genre, country or current programme, use My List and
+recently opened channels for explained suggestions, avoid failed or unsupported
+routes when better matches exist, and offer more choices. Its questions and
+answers stay in the current browser page and are not sent to an AI service.
+
 The catalogue and interface load without either large playback engine. HLS.js
 and DASH.js are separate on-demand chunks fetched only when their transport is
 selected; native HLS remains available on browsers that provide it. This keeps
@@ -77,21 +87,17 @@ HTTPS sources remain direct-first; Crow-Flix automatically falls back through
 the relay for CORS failures, uses it for HTTP and provider-header sources, and
 preserves redirected HLS, DASH child requests, and byte-range media.
 
-The catalogue distinguishes recently played `LIVE` routes, bounded-preflight
+The catalogue distinguishes recently played `LIVE` routes, selected-channel
 `READY` routes, unverified entries, part-time sources, regional sources, and
-temporarily failed entries. On Live TV, CrowFlix checks up to two diverse source
-identities for each channel on the current 48-card page, stopping each channel
-as soon as one direct/relay route proves media; Home, Guide, and My List retain
-a smaller 12-channel/deeper-source window. Every queue processes at most three
-channels concurrently, caches each result for 15 minutes, and reads no more than the manifest plus the key,
-initialization data, and first media bytes needed to prove that a route starts.
-Live and ready routes rank first, while every matching regional, part-time,
-offline, and unverified catalogue entry remains visible and reachable. The Live
-TV order can switch between working-first and alphabetical without removing a
-channel from the result set.
+temporarily failed entries. CrowFlix does not probe thousands of streams while
+the viewer browses. It begins a bounded readiness check only after the viewer
+opens a channel, caches each result for 15 minutes, and reads no more than the
+manifest plus the key, initialization data, and first media bytes needed to
+prove that a route starts. Every matching regional, part-time, offline, and
+unverified catalogue entry remains visible and reachable.
 
-Opening a multi-source channel starts a three-way bounded check across its
-current preferred source, its best HTTPS option, and an unverified alternative.
+Opening a multi-source channel starts a bounded check led by its current
+preferred source, its best HTTPS option, and an unverified alternative.
 As those checks finish, CrowFlix reorders only the routes it has not tried yet,
 so a newly proven route can jump ahead without restarting or replaying a failed
 attempt. Remaining checks stop as soon as one route proves ready. The route
