@@ -102,6 +102,8 @@ describe("worker input validation (no network is touched)", () => {
   });
 
   it("/epg validates Turnstile before guide work and is never HTTP-cached", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-23T12:30:00.000Z"));
     const guideUrl = "https://guides.example/au.xml";
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       const href = input instanceof Request ? input.url : input.toString();
@@ -140,6 +142,8 @@ describe("worker input validation (no network is touched)", () => {
   });
 
   it("/epg accepts a bounded POST and learns an exact provider-name alias", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-23T12:30:00.000Z"));
     const regional = "https://epgshare01.online/epgshare01/epg_ripper_CA2.xml.gz";
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       const href = input instanceof Request ? input.url : input.toString();
@@ -192,6 +196,8 @@ describe("worker input validation (no network is touched)", () => {
   });
 
   it("/epg maps a bounded provider-id alias onto the CrowFlix channel id", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-23T12:30:00.000Z"));
     const guideUrl = "https://guides.example/provider.xml";
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       const href = input instanceof Request ? input.url : input.toString();

@@ -1,5 +1,5 @@
 import { RelayError } from "./errors";
-import { loadAutoEpg } from "./epg";
+import { currentGuideProgrammeWindow, loadAutoEpg } from "./epg";
 import { rewriteM3u8 } from "./m3u8";
 import { concatChunks, readBounded } from "./streams";
 import {
@@ -186,6 +186,7 @@ async function handleEpg(
     timeZone,
     namesByChannel,
     aliasesByProviderId,
+    currentGuideProgrammeWindow(),
   );
   // Every browser guide request must reach this handler so its one-time
   // Turnstile token is verified. Upstream guide caching belongs inside the

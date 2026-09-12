@@ -162,7 +162,8 @@ timezone-specific Australian regional guide when applicable, followed by the
 larger country fallback. Complementary results are combined and deduplicated;
 a small worldwide match no longer prevents still-unmatched channels from being
 filled by the regional layers. XMLTV is decompressed and parsed as a bounded
-stream; only programmes matching requested channels are retained in memory.
+stream; only requested channels and the request's current 38-hour overlap
+window are retained in memory, while the four-hour guide remains complete.
 Guide requests use bounded POST bodies rather than placing large country
 catalogues in a URL. Authoritative and alternate channel names are used only
 for exact, unambiguous XMLTV display-name matching. The timeline ranks channels
