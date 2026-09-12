@@ -230,6 +230,39 @@ describe("XmltvStreamParser", () => {
     parser.push(xml);
     expect(parser.end()[0].title).toBe("Live programme");
   });
+
+  it("keeps only programmes overlapping the requested time window", () => {
+    const xml = `<tv>
+      <programme start="20260912190000 +0000" stop="20260912210000 +0000" channel="ABC1.au"><title>Crosses start</title></programme>
+      <programme start="20260912190000 +0000" stop="20260912200000 +0000" channel="ABC1.au"><title>Ends at start</title></programme>
+      <programme start="20260912210000 +0000" stop="20260912220000 +0000" channel="ABC1.au"><title>Inside</title></programme>
+      <programme start="20260914080000 +1000" stop="20260914090000 +1000" channel="ABC1.au"><title>Starts at end</title></programme>
+    </tv>`;
+    const parser = new XmltvStreamParser(["ABC1.au"], {
+      windowStart: "2026-09-12T20:00:00.000Z",
+      windowEnd: "2026-09-13T22:00:00.000Z",
+    });
+
+    parser.push(xml);
+    expect(parser.end().map((item) => item.title))
+      .toEqual(["Crosses start", "Inside"]);
+  });
+
+  it("does not let expired records consume the programme cap", () => {
+    const expired = Array.from({ length: 5 }, (_, index) =>
+      `<programme start="2026090${index + 1}120000 +0000" stop="2026090${index + 1}130000 +0000" channel="ABC1.au"><title>Expired ${index}</title></programme>`,
+    ).join("");
+    const current = '<programme start="20260912120000 +0000" stop="20260912130000 +0000" channel="ABC1.au"><title>Current</title></programme>';
+    const parser = new XmltvStreamParser(["ABC1.au"], {
+      maxProgrammes: 1,
+      windowStart: "2026-09-12T10:00:00.000Z",
+      windowEnd: "2026-09-14T00:00:00.000Z",
+    });
+
+    parser.push(`<tv>${expired}${current}</tv>`);
+    expect(parser.end()).toEqual([expect.objectContaining({ title: "Current" })]);
+    expect(parser.truncated).toBe(true);
+  });
 });
 
 describe("streamXmltvBody", () => {

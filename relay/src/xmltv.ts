@@ -14,6 +14,10 @@ export interface XmltvLimits {
   maxTitleBytes: number;
   maxDescBytes: number;
   maxCategoryBytes: number;
+  /** Keep only programmes whose stop is after this ISO timestamp. */
+  windowStart?: string;
+  /** Keep only programmes whose start is before this ISO timestamp. */
+  windowEnd?: string;
 }
 
 export const DEFAULT_XMLTV_LIMITS: XmltvLimits = {
@@ -311,6 +315,11 @@ export class XmltvStreamParser {
     const start = parseXmltvTime(startRaw);
     const stop = parseXmltvTime(stopRaw);
     if (start === null || stop === null) return;
+    // Overlap semantics retain long-running programmes that began before the
+    // window and programmes that finish inside it. Filter before decoding the
+    // larger title/description/category body.
+    if (this.limits.windowStart && stop <= this.limits.windowStart) return;
+    if (this.limits.windowEnd && start >= this.limits.windowEnd) return;
 
     const body = block.slice(tagEnd + 1);
     const title = elementText(body, "title", this.limits.maxTitleBytes);

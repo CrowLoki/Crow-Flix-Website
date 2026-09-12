@@ -70,7 +70,8 @@ Pipeline (mirrors `load_auto_epg` in `src-tauri/src/lib.rs` lines 2180-2237):
 1. Stream `https://iptv-org.github.io/api/guides.json`, retaining only objects
    for requested channel IDs while preserving feed, site, language, display
    name and source metadata. The 25+ MiB index is never materialized as one
-   in-memory JSON array.
+   in-memory JSON array, and unrelated records are discarded before full JSON
+   validation so the live index remains within the Worker's CPU budget.
 2. Rank guide source URLs by how many requested channel ids each covers
    (same `source_coverage` counting; stable descending sort).
 3. Try up to **3** ranked sources (the Rust core tries 8; the Worker has
@@ -99,7 +100,11 @@ scans incrementally and keeps only programmes whose `channel` attribute maps
 into the requested id set, including the same alias rules as the Rust core
 (exact id, base before `@`, lowercase base). XMLTV timestamps like
 `20260816120000 +0000` convert to ISO 8601 UTC; a missing timezone is treated
-as UTC, matching `parse_xmltv_time`.
+as UTC, matching `parse_xmltv_time`. Relay responses retain programmes that
+overlap the interval from two hours before the request through 36 hours after
+it; the four-hour live guide and current/up-next surfaces therefore remain
+complete without parsing, storing, and transferring a full week of expired or
+distant listings.
 
 Success response (mirrors the app's camelCase `GuideResult`; XMLTV `<desc>`
 is returned as `description`):
@@ -178,6 +183,7 @@ multipart and malformed ranges are rejected.
 | Kept programmes after combining layers   | 50,000  |
 | Decompressed XMLTV per source            | 96 MiB  |
 | guides.json index                        | 32 MiB streamed |
+| Returned programme window                | now - 2h through now + 36h |
 | `/fetch` response                        | 32 MiB  |
 | Rewritten playlist body                  | 4 MiB   |
 | Redirects followed (re-validated)        | 5       |

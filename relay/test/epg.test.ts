@@ -4,6 +4,7 @@ import {
   GUIDES_URL,
   XMLTV_MAX_DECOMPRESSED_BYTES,
   australianGuideSource,
+  currentGuideProgrammeWindow,
   epgSharePrimaryTag,
   enrichGuideNames,
   loadAutoEpg,
@@ -161,6 +162,69 @@ describe("streamGuidesJson", () => {
     const body = new Response(JSON.stringify([{ channel: "ABC.ca", sources: [] }])).body!;
     await expect(streamGuidesJson(body, ["ABC.ca"], 8))
       .rejects.toThrow(/exceeded the relay size limit/);
+  });
+
+  it("preserves escaped metadata and nested sources across one-byte chunks", async () => {
+    const payload = '[{"channel":"OTHER.us","feed":null,"site":"other.test",'
+      + '"site_id":"other","site_name":"Other","lang":"en","sources":[]},'
+      + '{"channel":"ABC\\u002eca","feed":"Toronto","site":"guide.test",'
+      + '"site_id":"abc","site_name":"ABC \\"Toronto\\" {East}","lang":"en",'
+      + '"sources":[{"host":"cdn.test","url":"https://cdn.test/abc.xml",'
+      + '"format":"XML"}]}]';
+    const bytes = new TextEncoder().encode(payload);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+        controller.close();
+      },
+    });
+
+    await expect(streamGuidesJson(body, ["ABC.ca"])).resolves.toEqual([{
+      channel: "ABC.ca",
+      feed: "Toronto",
+      site: "guide.test",
+      siteId: "abc",
+      siteName: 'ABC "Toronto" {East}',
+      lang: "en",
+      sources: [{
+        host: "cdn.test",
+        url: "https://cdn.test/abc.xml",
+        format: "XML",
+      }],
+    }]);
+  });
+
+  it("accepts separator whitespace and reordered known fields", async () => {
+    const body = new Response(
+      '[{"channel":"A","sources":[]} , \n {"site":"b.test","sources":[],"channel" : "B"}]',
+    ).body!;
+
+    await expect(streamGuidesJson(body, ["A", "B"]))
+      .resolves.toEqual([
+        { channel: "A", sources: [] },
+        { channel: "B", site: "b.test", sources: [] },
+      ]);
+  });
+
+  it("validates duplicate and escaped channel keys before filtering", async () => {
+    const body = new Response(
+      '[{"channel":"OTHER","channel" : "WANTED","sources":[]},'
+      + '{"channel":"OTHER","\\u0063hannel":"ESCAPED","sources":[]}]',
+    ).body!;
+
+    const guides = await streamGuidesJson(body, ["WANTED", "ESCAPED"]);
+
+    expect(guides.map((guide) => guide.channel)).toEqual(["WANTED", "ESCAPED"]);
+  });
+});
+
+describe("currentGuideProgrammeWindow", () => {
+  it("keeps a request-wide overlap window around now", () => {
+    const now = Date.parse("2026-09-12T22:30:00.000Z");
+    expect(currentGuideProgrammeWindow(now)).toEqual({
+      windowStart: "2026-09-12T20:30:00.000Z",
+      windowEnd: "2026-09-14T10:30:00.000Z",
+    });
   });
 });
 
