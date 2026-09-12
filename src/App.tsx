@@ -45,6 +45,7 @@ import {
   SpinnerGap,
   Television,
   Translate,
+  UserCircle,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
@@ -96,6 +97,11 @@ import {
   preferredAudienceCountryOrder,
   prioritizeEnglishAustraliaUnitedStates,
 } from "./audiencePreferences";
+import {
+  clearAccountPromptPreference,
+  loadAccountPromptPreference,
+  saveAccountPromptPreference,
+} from "./accountPreferences";
 import WebDestinationsView from "./WebDestinationsView";
 import {
   loadWebDestinations,
@@ -146,6 +152,7 @@ type CrowFlixNavigationState = {
   playingKey: string | null;
   detailsKey: string | null;
   sourceOpen: boolean;
+  accountOpen: boolean;
   browseMode: BrowseMode;
   category: string;
   country: string;
@@ -176,6 +183,7 @@ function readCrowFlixNavigationState(value: unknown): CrowFlixNavigationState | 
     playingKey: nullableText("playingKey"),
     detailsKey: nullableText("detailsKey"),
     sourceOpen: record.sourceOpen === true,
+    accountOpen: record.accountOpen === true,
     browseMode: browseMode as BrowseMode,
     category: text("category") || "all",
     country: text("country") || "all",
@@ -467,6 +475,9 @@ export default function App() {
   const [initialWebLibrary] = useState(() =>
     loadWebDestinations(localStorage)
   );
+  const [initialAccountPreference] = useState(() =>
+    loadAccountPromptPreference(localStorage)
+  );
   const [view, setView] = useState<View>("home");
   const [catalog, setCatalog] = useState<Catalog>(emptyCatalog);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -494,6 +505,10 @@ export default function App() {
   const [playing, setPlaying] = useState<Channel | null>(null);
   const [detailsChannel, setDetailsChannel] = useState<Channel | null>(null);
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountPromptSuppressed, setAccountPromptSuppressed] = useState(
+    initialAccountPreference.suppressed,
+  );
   const [sourceUrl, setSourceUrl] = useState("");
   const [epgUrl, setEpgUrl] = useState("");
   const [toast, setToast] = useState("");
@@ -552,6 +567,7 @@ export default function App() {
     playingKey: playing?.key || null,
     detailsKey: detailsChannel?.key || null,
     sourceOpen,
+    accountOpen,
     browseMode,
     category,
     country,
@@ -565,7 +581,7 @@ export default function App() {
     feed,
     provider,
     guideCountry,
-  }), [browseMode, category, city, country, detailsChannel?.key, feed, guideCountry, language, network, owner, playing?.key, provider, region, sourceOpen, subdivision, timezone, view]);
+  }), [accountOpen, browseMode, category, city, country, detailsChannel?.key, feed, guideCountry, language, network, owner, playing?.key, provider, region, sourceOpen, subdivision, timezone, view]);
   useEffect(() => { navigationStateRef.current = navigationState; }, [navigationState]);
   const applyNavigationState = useCallback((next: CrowFlixNavigationState) => {
     const resolveChannel = (key: string | null) => key
@@ -576,6 +592,7 @@ export default function App() {
     setPlaying(resolveChannel(next.playingKey));
     setDetailsChannel(resolveChannel(next.detailsKey));
     setSourceOpen(next.sourceOpen);
+    setAccountOpen(next.accountOpen);
     setBrowseMode(next.browseMode);
     setCategory(next.category);
     setCountry(next.country);
@@ -642,6 +659,25 @@ export default function App() {
   }, []);
   const closeSourceDialog = useCallback(() => setSourceOpen(false), []);
   const closeChannelDetails = useCallback(() => setDetailsChannel(null), []);
+  const closeAccountSettings = useCallback(() => setAccountOpen(false), []);
+  const openAccountSettings = useCallback(() => {
+    setSourceOpen(false);
+    setDetailsChannel(null);
+    setAccountOpen(true);
+  }, []);
+  const updateAccountPromptSuppression = useCallback((suppressed: boolean) => {
+    const error = suppressed
+      ? saveAccountPromptPreference(localStorage, true)
+      : clearAccountPromptPreference(localStorage);
+    if (error) {
+      showToast(error);
+      return;
+    }
+    setAccountPromptSuppressed(suppressed);
+    showToast(suppressed
+      ? "Optional account reminders are hidden on this device"
+      : "Optional account reminders are restored on this device");
+  }, [showToast]);
 
   const loadCatalog = useCallback(async (force = false) => {
     setLoading(true);
@@ -698,6 +734,9 @@ export default function App() {
       showToast(`CrowFlix recovered the Web Library defaults: ${initialWebLibrary.error}`);
     }
   }, [initialWebLibrary.error, showToast]);
+  useEffect(() => {
+    if (initialAccountPreference.error) showToast(initialAccountPreference.error);
+  }, [initialAccountPreference.error, showToast]);
   useEffect(() => { const timer = window.setInterval(() => setClock(new Date()), 30_000); return () => window.clearInterval(timer); }, []);
   useEffect(() => {
     if (!catalog.channels.length) return;
@@ -1177,12 +1216,12 @@ export default function App() {
   return (
     <PlaybackAvailabilityContext.Provider value={availabilityByChannel}>
     <div className="app-shell">
-      <Header view={view} onView={changeView} query={query} onQuery={(value) => { setQuery(value); if (value && view !== "web") setView("live"); }} onSource={() => setSourceOpen(true)} canAddSource />
+      <Header view={view} onView={changeView} query={query} onQuery={(value) => { setQuery(value); if (value && view !== "web") setView("live"); }} onSource={() => { setAccountOpen(false); setSourceOpen(true); }} onAccount={openAccountSettings} canAddSource />
       {loading && <LoadingOverlay message={loadingMessage} />}
       {catalogError && <CatalogErrorBanner message={catalogError} hasCatalog={catalog.channels.length > 0} loading={loading} onRetry={() => void loadCatalog(catalog.channels.length > 0)} />}
       <main>
         {view === "home" && <HomeView channels={rankedCatalogChannels} australianEnglish={australianEnglishEntertainment} americanEnglish={americanEnglishEntertainment} english={englishEntertainment} programmes={programmes} clock={clock} hero={hero} heroNow={heroNow} heroNext={heroNext} recent={recentChannels} favourites={favourites} onPlay={play} onFavourite={toggleFavourite} onGuide={() => setView("guide")} onInfo={setDetailsChannel} />}
-        {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} subdivision={subdivision} setSubdivision={setSubdivision} city={city} setCity={setCity} timezone={timezone} setTimezone={setTimezone} owner={owner} setOwner={setOwner} network={network} setNetwork={setNetwork} feed={feed} setFeed={setFeed} provider={provider} setProvider={setProvider} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} />}
+        {view === "live" && <LiveView catalog={catalog} channels={filteredChannels} mode={browseMode} setMode={setBrowseMode} category={category} setCategory={setCategory} country={country} setCountry={setCountry} language={language} setLanguage={setLanguage} region={region} setRegion={setRegion} subdivision={subdivision} setSubdivision={setSubdivision} city={city} setCity={setCity} timezone={timezone} setTimezone={setTimezone} owner={owner} setOwner={setOwner} network={network} setNetwork={setNetwork} feed={feed} setFeed={setFeed} provider={provider} setProvider={setProvider} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} onAccount={openAccountSettings} />}
         {view === "guide" && <GuideView catalog={catalog} country={guideCountry} setCountry={setGuideCountry} programmes={programmes} clock={clock} status={guideStatus} loading={guideLoading} requiresVerification={!isDesktop && guideNeedsVerification} verificationError={guideVerificationError} onVerified={(token) => void loadGuide(guideCountry, true, token)} onVerificationError={(message) => { setGuideVerificationError(message || null); if (message) setGuideStatus(message); }} onRefresh={() => void loadGuide(guideCountry, true)} onPlay={play} />}
         {view === "web" && <WebDestinationsView items={webDestinations} query={query} onOpen={(item) => void openWebsite(item.url, item.title)} onSave={saveWebDestination} onDelete={deleteWebDestination} onImport={importWebDestinations} onMessage={showToast} />}
         {view === "favourites" && <FavouritesView channels={favouriteChannels} favourites={favourites} programmes={programmes} clock={clock} onPlay={play} onFavourite={toggleFavourite} onInfo={setDetailsChannel} onBrowse={() => setView("live")} />}
@@ -1196,6 +1235,7 @@ export default function App() {
       {playing && <Player channel={playing} channels={rankedCatalogChannels} programmes={programmes} clock={clock} now={currentProgramme(programmes, playing.id, clock)} next={nextProgramme(programmes, playing.id, clock)} playback={playback} videoRef={videoRef} zapNotice={zapNotice} onOpenWebsite={(url, title) => void openWebsite(url, title)} onSelectChannel={(channel) => zapTo(channel, channel.name)} onStepChannel={zapStep} onClose={() => setPlaying(null)} />}
       {detailsChannel && <ChannelDetails channel={detailsChannel} now={currentProgramme(programmes, detailsChannel.id, clock)} next={nextProgramme(programmes, detailsChannel.id, clock)} favourite={favourites.includes(detailsChannel.key)} onPlay={(channel) => { closeChannelDetails(); play(channel); }} onFavourite={toggleFavourite} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={closeChannelDetails} />}
       {sourceOpen && <SourceDialog sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} epgUrl={epgUrl} setEpgUrl={setEpgUrl} loading={loading || guideLoading} onClose={closeSourceDialog} onPlaylistUrl={() => void importPlaylistUrl()} onPlaylistFile={(file) => void importPlaylistFile(file)} onEpgUrl={() => void importEpgUrl()} onEpgFile={(file) => void importEpgFile(file)} />}
+      {accountOpen && <AccountSettingsDialog favourites={favourites.length} recent={recent.length} reminderSuppressed={accountPromptSuppressed} onReminderSuppressed={updateAccountPromptSuppression} onClose={closeAccountSettings} />}
       {toast && <div className="toast"><CheckCircle weight="fill" />{toast}</div>}
       <CrowGuide view={view} channels={rankedCatalogChannels} recent={recent} onPlay={play} onGuide={() => setView("guide")} />
     </div>
@@ -1252,12 +1292,12 @@ function CrowGuide({ view, channels, recent, onPlay, onGuide }: { view: View; ch
   </aside>;
 }
 
-function Header({ view, onView, query, onQuery, onSource, canAddSource }: { view: View; onView: (view: View) => void; query: string; onQuery: (value: string) => void; onSource: () => void; canAddSource: boolean }) {
+function Header({ view, onView, query, onQuery, onSource, onAccount, canAddSource }: { view: View; onView: (view: View) => void; query: string; onQuery: (value: string) => void; onSource: () => void; onAccount: () => void; canAddSource: boolean }) {
   const nav: Array<[View, string, React.ReactNode]> = [["home", "Home", <House />], ["live", "Live TV", <Broadcast />], ["guide", "Guide", <CalendarDots />], ["web", "CrowFlix Free", <GlobeHemisphereWest />], ["favourites", "My List", <Heart />], ["about", "About", <Info />]];
   return <header className="topbar">
-    <button className="brand" onClick={() => onView("home")}><img src={BRAND_ICON} alt="" /><span>CROW<strong>FLIX</strong></span></button>
+    <button className="brand" aria-label="CrowFlix home" onClick={() => onView("home")}><img src={BRAND_ICON} alt="" /><span>CROW<strong>FLIX</strong></span></button>
     <nav>{nav.map(([id, label, icon]) => <button key={id} className={view === id ? "active" : ""} onClick={() => onView(id)}>{icon}<span>{label}</span></button>)}</nav>
-    <div className="header-actions"><label className="search"><MagnifyingGlass /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder={view === "web" ? "Search websites" : "Search the world"} />{query && <button aria-label="Clear search" onClick={() => onQuery("")}><X /></button>}</label>{canAddSource && <button className="source-button" onClick={onSource}><Plus /><span>Add source</span></button>}</div>
+    <div className="header-actions"><label className="search"><MagnifyingGlass /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder={view === "web" ? "Search websites" : "Search the world"} />{query && <button aria-label="Clear search" onClick={() => onQuery("")}><X /></button>}</label>{canAddSource && <button className="source-button" onClick={onSource}><Plus /><span>Add source</span></button>}<button className="account-button" aria-label="Open account settings" onClick={onAccount}><UserCircle /><span>Account</span></button></div>
   </header>;
 }
 
@@ -1377,9 +1417,10 @@ type LiveViewProps = {
   onPlay: (channel: Channel) => void;
   onFavourite: (channel: Channel) => void;
   onInfo: (channel: Channel) => void;
+  onAccount: () => void;
 };
 
-function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, subdivision, setSubdivision, city, setCity, timezone, setTimezone, owner, setOwner, network, setNetwork, feed, setFeed, provider, setProvider, favourites, programmes, clock, onPlay, onFavourite, onInfo }: LiveViewProps) {
+function LiveView({ catalog, channels, mode, setMode, category, setCategory, country, setCountry, language, setLanguage, region, setRegion, subdivision, setSubdivision, city, setCity, timezone, setTimezone, owner, setOwner, network, setNetwork, feed, setFeed, provider, setProvider, favourites, programmes, clock, onPlay, onFavourite, onInfo, onAccount }: LiveViewProps) {
   const [catalogOrder, setCatalogOrder] = useState<"preferred" | "alphabetical">("preferred");
   const [page, setPage] = useState(1);
   const [exploreOpen, setExploreOpen] = useState<BrowseMode | null>(null);
@@ -1469,7 +1510,7 @@ function LiveView({ catalog, channels, mode, setMode, category, setCategory, cou
   ].filter((label): label is string => Boolean(label));
   return <div className="browse-page">
     <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television · Australia, United States & English first</span><h1>Browse Live TV</h1><p>The complete matching catalogue stays visible. Australian and American English channels lead by default; every country and language remains searchable, filterable, and reachable.</p></div><div className="catalog-number"><strong>{visibleChannels.length.toLocaleString()}</strong><span>catalogued · {matchingSources.toLocaleString()} sources</span></div></div>
-    <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{browseModes.map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} aria-expanded={exploreOpen === id} aria-controls="live-explore-popout" onClick={() => { setMode(id); setExploreOpen((open) => open === id ? null : id); }}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{activeFilterLabels.map((label, index) => <b key={`${label}-${index}`}>{label}</b>)}<button onClick={clearAll}>Clear all</button></div></aside>
+    <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{browseModes.map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} aria-expanded={exploreOpen === id} aria-controls="live-explore-popout" onClick={() => { setMode(id); setExploreOpen((open) => open === id ? null : id); }}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{activeFilterLabels.map((label, index) => <b key={`${label}-${index}`}>{label}</b>)}<button onClick={clearAll}>Clear all</button></div><button className="account-sidebar-button" onClick={() => { setExploreOpen(null); onAccount(); }}><UserCircle /><span>Account settings</span><CaretRight /></button></aside>
       {exploreOpen && <section id="live-explore-popout" className="explore-popout" role="dialog" aria-label={`Choose ${titleCase(exploreOpen)}`}><header><span><ListBullets /> Explore {titleCase(exploreOpen)}</span><button aria-label="Close Explore menu" onClick={() => setExploreOpen(null)}><X /></button></header><div className="explore-popout-options"><button className={selected === "all" ? "active" : ""} onClick={() => { select("all"); setExploreOpen(null); }}><span>All {titleCase(exploreOpen)}</span><small>{visibleChannels.length.toLocaleString()}</small></button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => { select(item.id); setExploreOpen(null); }}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div></section>}
       <section className="browse-results"><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}</span></div><div className="availability-switch"><button className={catalogOrder === "preferred" ? "active" : ""} onClick={() => setCatalogOrder("preferred")}>Australia / US / English first</button><button className={catalogOrder === "alphabetical" ? "active" : ""} onClick={() => setCatalogOrder("alphabetical")}>A–Z</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{pageChannels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>
   </div>;
@@ -2006,6 +2047,33 @@ function Player({
         <small>No credentials, headers, paths, or URL query values are included.</small>
       </details>}
     </div>}
+  </div>;
+}
+
+function AccountSettingsDialog({ favourites, recent, reminderSuppressed, onReminderSuppressed, onClose }: { favourites: number; recent: number; reminderSuppressed: boolean; onReminderSuppressed: (suppressed: boolean) => void; onClose: () => void }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocusTrap(dialogRef, onClose);
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+    <section ref={dialogRef} className="source-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title">
+      <button type="button" className="dialog-close" aria-label="Close account settings" onClick={onClose}><X /></button>
+      <span className="overline"><UserCircle /> Optional account settings</span>
+      <h2 id="account-dialog-title">Account settings</h2>
+      <p>You're browsing anonymously. CrowFlix remains fully usable without signing in, and your current library stays on this device.</p>
+      <div className="account-status-card">
+        <UserCircle weight="fill" />
+        <span><strong>Browsing anonymously</strong><small>No login, redirect, account request or upload has occurred.</small></span>
+      </div>
+      <div className="account-data-grid">
+        <div><Heart weight="fill" /><span><strong>{favourites.toLocaleString()}</strong><small>My List channels on this device</small></span></div>
+        <div><Clock /><span><strong>{recent.toLocaleString()}</strong><small>Recent channels on this device</small></span></div>
+      </div>
+      <label className="account-reminder-setting">
+        <input type="checkbox" checked={reminderSuppressed} onChange={(event) => onReminderSuppressed(event.target.checked)} />
+        <span><strong>Do not show the optional sign-in reminder</strong><small>This affects only this browser. Account settings always remain available.</small></span>
+      </label>
+      <div className="account-foundation-note"><Info weight="fill" /><span><strong>Account sync is not available yet.</strong><small>Your library stays in this browser. CrowFlix will offer sign-in only after secure syncing, data export, and account deletion are ready.</small></span></div>
+      <div className="dialog-actions"><button className="primary" onClick={onClose}>Keep watching</button></div>
+    </section>
   </div>;
 }
 

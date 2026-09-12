@@ -1,6 +1,6 @@
 # Crow-Flix website privacy notice
 
-Last updated: 23 August 2026
+Last updated: 12 September 2026
 
 This notice describes the independent Crow-Flix browser application at
 `https://crowflix.tv/` and its Crow-Flix relay. It does not describe the
@@ -25,6 +25,8 @@ The website stores the following data locally in browser storage:
 - the optional CrowFlix helper's local suggestion state, calculated only from
   those recently opened channel identifiers;
 - user-managed Web Library destinations;
+- the optional account-reminder choice, which remains on this device and does
+  not create an account or login;
 - source-health, cooldown, and preferred-source results created only while a
   visitor is playing a selected channel; and
 - cached catalogue metadata used for faster startup and stale-on-failure
