@@ -160,9 +160,89 @@ try {
     })(),
     enlargedClawCursor: getComputedStyle(document.documentElement).cursor.includes('/cursors/40/normal.png'),
     helper: Boolean(document.querySelector('.crow-guide-avatar')),
+    brandAccessible: document.querySelector('.brand')?.getAttribute('aria-label') === 'CrowFlix home',
     desktopDownload: document.body.innerText.includes('Download Crow-Flix for Windows'),
+    headerFits: (() => {
+      const actions = document.querySelector('.header-actions')?.getBoundingClientRect();
+      const account = document.querySelector('.account-button')?.getBoundingClientRect();
+      return document.documentElement.scrollWidth <= innerWidth
+        && Boolean(actions && actions.left >= 0 && actions.right <= innerWidth)
+        && Boolean(account && account.left >= 0 && account.right <= innerWidth);
+    })(),
     status: document.querySelector('.status-bar')?.innerText || ''
   })`);
+  home.responsiveHeader = [];
+  for (const width of [320, 420, 421, 720, 721, 960, 1000, 1001, 1280, 1281, 1500, 1501]) {
+    await page.send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    home.responsiveHeader.push(await evaluate(`(() => {
+      const brand = document.querySelector('.brand')?.getBoundingClientRect();
+      const brandLabel = document.querySelector('.brand span');
+      const label = brandLabel && getComputedStyle(brandLabel).display !== 'none'
+        ? brandLabel.getBoundingClientRect()
+        : null;
+      const nav = document.querySelector('.topbar nav')?.getBoundingClientRect();
+      const search = document.querySelector('.search')?.getBoundingClientRect();
+      const source = document.querySelector('.source-button')?.getBoundingClientRect();
+      const account = document.querySelector('.account-button')?.getBoundingClientRect();
+      const overlaps = (left, right) => Boolean(left && right
+        && left.left < right.right && left.right > right.left
+        && left.top < right.bottom && left.bottom > right.top);
+      return {
+        width: innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        fits: document.documentElement.scrollWidth <= innerWidth
+          && Boolean(brand && brand.left >= 0)
+          && Boolean(search && search.left >= 0 && search.right <= innerWidth)
+          && Boolean(source && source.left >= 0 && source.right <= innerWidth)
+          && Boolean(account && account.left >= 0 && account.right <= innerWidth)
+          && !overlaps(label, search)
+          && !overlaps(nav, search),
+      };
+    })()`));
+  }
+  await page.send("Emulation.clearDeviceMetricsOverride");
+  await waitFor("innerWidth >= 1400");
+  await evaluate("document.querySelector('.account-button')?.focus(); document.querySelector('.account-button')?.click()");
+  await waitFor("Boolean(document.querySelector('.account-dialog'))");
+  await waitFor("history.state?.accountOpen === true");
+  const accountSettings = await evaluate(`({
+    anonymous: document.querySelector('.account-dialog')?.innerText.includes('Browsing anonymously') || false,
+    optional: document.querySelector('.account-dialog')?.innerText.includes('fully usable without signing in') || false,
+    honestFoundation: document.querySelector('.account-dialog')?.innerText.includes('Account sync is not available yet') || false,
+    noDeadSignIn: ![...document.querySelectorAll('.account-dialog button')].some((button) => /^Sign in$/i.test(button.textContent.trim())),
+    reminder: Boolean(document.querySelector('.account-reminder-setting input')),
+    initialFocus: document.activeElement?.classList.contains('dialog-close') || false
+  })`);
+  await evaluate("history.back()");
+  await waitFor("history.state?.accountOpen === false && !document.querySelector('.account-dialog')");
+  accountSettings.historyBackClosed = await evaluate("!document.querySelector('.account-dialog')");
+  await evaluate("history.forward()");
+  await waitFor("history.state?.accountOpen === true && Boolean(document.querySelector('.account-dialog'))");
+  accountSettings.historyForwardRestored = await evaluate("Boolean(document.querySelector('.account-dialog'))");
+  await evaluate("document.querySelector('.account-reminder-setting input')?.click()");
+  await waitFor(`JSON.parse(localStorage.getItem('crowflix:account-prompt:v1') || '{}').suppressed === true`);
+  accountSettings.preferencePersisted = await evaluate(`JSON.parse(localStorage.getItem('crowflix:account-prompt:v1') || '{}').suppressed === true`);
+  await evaluate("document.querySelector('.account-dialog .dialog-close')?.click()");
+  await waitFor("!document.querySelector('.account-dialog')");
+  const reloaded = page.event("Page.loadEventFired");
+  await page.send("Page.reload", { ignoreCache: true });
+  await reloaded;
+  await waitFor("!document.querySelector('.loading-overlay') && document.querySelectorAll('.channel-card').length > 0");
+  await evaluate("document.querySelector('.account-button')?.focus(); document.querySelector('.account-button')?.click()");
+  await waitFor("Boolean(document.querySelector('.account-dialog'))");
+  accountSettings.reloadPersisted = await evaluate("document.querySelector('.account-reminder-setting input')?.checked === true");
+  await evaluate("document.querySelector('.account-reminder-setting input')?.click()");
+  await waitFor("localStorage.getItem('crowflix:account-prompt:v1') === null");
+  accountSettings.preferenceReset = await evaluate("localStorage.getItem('crowflix:account-prompt:v1') === null");
+  await evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+  await waitFor("!document.querySelector('.account-dialog')");
+  accountSettings.escapeDismissed = await evaluate("!document.querySelector('.account-dialog')");
+  accountSettings.focusReturned = await evaluate("document.activeElement?.classList.contains('account-button') || false");
   await evaluate("document.querySelector('.crow-guide-avatar')?.click()");
   await waitFor("Boolean(document.querySelector('.crow-guide-bubble'))");
   const helper = await evaluate(`({
@@ -182,6 +262,11 @@ try {
   })`);
   await evaluate("document.querySelector('.explore-popout button[aria-label]')?.click()");
   await waitFor("!document.querySelector('.explore-popout')");
+  await evaluate("document.querySelector('.account-sidebar-button')?.click()");
+  await waitFor("Boolean(document.querySelector('.account-dialog'))");
+  accountSettings.exploreEntry = await evaluate(`document.querySelector('.account-reminder-setting input')?.checked === false`);
+  await evaluate("document.querySelector('.account-dialog .dialog-close')?.click()");
+  await waitFor("!document.querySelector('.account-dialog')");
   const live = await evaluate(`({
     cards: document.querySelectorAll('.browse-results .channel-card').length,
     providers: document.body.innerText.includes('Source providers'),
@@ -284,8 +369,9 @@ try {
   browserHistory.forwardRestoredPlayer = await evaluate("Boolean(document.querySelector('.player'))");
 
   const assertions = {
-    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.enlargedClawCursor && home.helper && !home.desktopDownload,
+    homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.enlargedClawCursor && home.helper && home.brandAccessible && !home.desktopDownload && home.headerFits && home.responsiveHeader.every((item) => item.fits),
     crowGuide: helper.localOnly && helper.suggested,
+    accountFoundation: accountSettings.anonymous && accountSettings.optional && accountSettings.honestFoundation && accountSettings.noDeadSignIn && accountSettings.reminder && accountSettings.initialFocus && accountSettings.historyBackClosed && accountSettings.historyForwardRestored && accountSettings.preferencePersisted && accountSettings.reloadPersisted && accountSettings.preferenceReset && accountSettings.escapeDismissed && accountSettings.focusReturned && accountSettings.exploreEntry,
     explorePopout: explore.title.includes('Explore') && explore.options > 1 && explore.overlay,
     fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy && live.preferredOrder,
     noBackgroundStreamProbing: backgroundStreamRequests.length === 0,
@@ -301,7 +387,7 @@ try {
     browserBackForward: browserHistory.returnedToLive && browserHistory.forwardRestoredPlayer,
   };
   if (Object.values(assertions).some((value) => !value)) {
-    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, helper, explore, live, backgroundStreamRequests, hoverPreview, details, sourceDialog, guideAudience, freeCollection, player, subtitleMenu, miniGuide, browserHistory })}`);
+    throw new Error(`Headless acceptance assertion failed: ${JSON.stringify({ assertions, home, accountSettings, helper, explore, live, backgroundStreamRequests, hoverPreview, details, sourceDialog, guideAudience, freeCollection, player, subtitleMenu, miniGuide, browserHistory })}`);
   }
   console.log(JSON.stringify({
     ok: true,

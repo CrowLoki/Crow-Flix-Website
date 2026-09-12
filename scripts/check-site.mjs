@@ -33,6 +33,8 @@ for (const file of [
   "src/main.tsx",
   "src/App.tsx",
   "src/App.css",
+  "src/accountPreferences.ts",
+  "src/accountSync.ts",
   "src/audiencePreferences.ts",
   "src/webCatalog.ts",
   "src/officialFreeCollection.ts",
@@ -45,6 +47,7 @@ for (const file of [
   "src/TurnstileGuideGate.tsx",
   "src/playback/usePlaybackController.ts",
   "scripts/headless-acceptance.mjs",
+  "PRIVACY.md",
   "relay/src/index.ts",
   "relay/src/turnstile.ts",
   "RECOVERY-PROVENANCE.json",
@@ -97,10 +100,18 @@ const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
 for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", "CrowFlix Free", "Australia, United States & English first", "Australia / US / English first", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
-for (const value of ["HoverPreview", "CrowGuide", "explore-popout", "CROWFLIX_HISTORY_KEY", "popstate"]) {
+for (const value of ["HoverPreview", "CrowGuide", "explore-popout", "CROWFLIX_HISTORY_KEY", "popstate", "AccountSettingsDialog", "Browsing anonymously", "Account sync is not available yet", 'aria-label="CrowFlix home"']) {
   assert(app.includes(value), `Requested CrowFlix interaction is missing: ${value}`);
 }
 
+const accountPreferences = await readFile(path.join(repositoryRoot, "src", "accountPreferences.ts"), "utf8");
+for (const value of ["crowflix:account-prompt:v1", "loadAccountPromptPreference", "saveAccountPromptPreference", "clearAccountPromptPreference"]) {
+  assert(accountPreferences.includes(value), `The optional account preference contract is missing: ${value}`);
+}
+const accountSync = await readFile(path.join(repositoryRoot, "src", "accountSync.ts"), "utf8");
+for (const value of ["AccountSyncAdapter", "expectedRevision", "mergeAccountFavouriteKeys", "exportAccountData", "deleteAccount"]) {
+  assert(accountSync.includes(value), `The provider-neutral account contract is missing: ${value}`);
+}
 const appCss = await readFile(path.join(repositoryRoot, "src", "App.css"), "utf8");
 assert(appCss.includes('/cursors/40/normal.png'), "CrowFlix does not use the requested enlarged claw cursor artwork");
 assert(!appCss.includes('/cursors/normal.cur'), "CrowFlix still references the oversized cursor file");
@@ -229,7 +240,7 @@ assert(!headers.includes("script-src 'none'"), "_headers still disables the brow
 assert(!headers.includes("unsafe-eval"), "_headers permits unsafe-eval");
 
 const privacy = await readFile(path.join(repositoryRoot, "PRIVACY.md"), "utf8");
-for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "IPTV Nexus", "personal playlist or XMLTV URL", "does not attach search text", "does not probe or preload individual channel streams", "CrowFlix Free Collection", "does not use an external AI service", "clear site data for `crowflix.tv`"]) {
+for (const value of ["Cloudflare Turnstile", "No Crow-Flix account or payment system", "optional account-reminder choice", "IPTV Nexus", "personal playlist or XMLTV URL", "does not attach search text", "does not probe or preload individual channel streams", "CrowFlix Free Collection", "does not use an external AI service", "clear site data for `crowflix.tv`"]) {
   assert(privacy.includes(value), `PRIVACY.md is missing: ${value}`);
 }
 
