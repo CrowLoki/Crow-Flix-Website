@@ -22,8 +22,6 @@ answer a request.
 The website stores the following data locally in browser storage:
 
 - favourite and recently opened channel identifiers;
-- the optional CrowFlix helper's local suggestion state, calculated only from
-  those recently opened channel identifiers;
 - user-managed Web Library destinations;
 - the optional account-reminder choice, which remains on this device and does
   not create an account or login;
@@ -84,8 +82,10 @@ an exact URL-and-header identity already present in the current IPTV-org data;
 it cannot add or replace a stream by itself.
 
 The optional animated CrowFlix helper does not use an external AI service or
-analytics profile. Its suggestions are calculated in the browser from recent
-channel identifiers already stored on that device.
+analytics profile. It searches the already loaded catalogue and programme guide
+in the browser, and can use favourite and recently opened channel identifiers
+stored on that device. Questions typed into the helper remain in the current
+page session and are not uploaded or added to browser storage.
 
 ## Crow-Flix relay
 

@@ -79,10 +79,18 @@ import {
 } from "./playback/usePlaybackController";
 import { sourceIdentifier, type SourceHealth, type StreamSource } from "./playback/types";
 import {
+  browserPreflightRoutes,
+  isFreshPreflight,
+  preflightSource,
   readSourcePreflights,
+  recordSourcePreflight,
   SOURCE_PREFLIGHT_CHANGED_EVENT,
   type SourcePreflight,
 } from "./playback/preflight";
+import {
+  findReadyRoute,
+  PLAYING_CHANNEL_PREFLIGHT_SOURCE_LIMIT,
+} from "./playback/preflightWindow";
 import {
   availabilityLabel,
   availabilityRank,
@@ -97,6 +105,7 @@ import {
   preferredAudienceCountryOrder,
   prioritizeEnglishAustraliaUnitedStates,
 } from "./audiencePreferences";
+import { answerCrowGuide, type CrowGuideIntent } from "./crowGuide";
 import {
   clearAccountPromptPreference,
   loadAccountPromptPreference,
@@ -876,6 +885,33 @@ export default function App() {
     setRecent((items) => [channel.key, ...items.filter((key) => key !== channel.key)].slice(0, 24));
   }, []);
 
+  useEffect(() => {
+    if (!playing || isDesktop || catalog.source.includes("preview")) return undefined;
+    const controller = new AbortController();
+    const routes = browserPreflightRoutes(
+      channelSources(playing),
+      PLAYING_CHANNEL_PREFLIGHT_SOURCE_LIMIT,
+    );
+    void findReadyRoute(
+      routes,
+      (source) => {
+        const current = readSourcePreflights()[sourceIdentifier(source)];
+        return isFreshPreflight(current) ? current.status : null;
+      },
+      async (source) => {
+        try {
+          const result = await preflightSource(source, undefined, controller.signal);
+          if (!controller.signal.aborted) recordSourcePreflight(source, result);
+          return result.status;
+        } catch {
+          return "offline";
+        }
+      },
+      controller.signal,
+    );
+    return () => controller.abort();
+  }, [catalog.source, isDesktop, playing]);
+
   const toggleFavourite = useCallback((channel: Channel) => {
     setFavourites((items) => items.includes(channel.key) ? items.filter((key) => key !== channel.key) : [...items, channel.key]);
   }, []);
@@ -1231,45 +1267,85 @@ export default function App() {
         ? <footer className="status-bar"><span><GlobeHemisphereWest weight="fill" /> {webDestinations.length.toLocaleString()} CrowFlix free and website destinations</span><span>Saved on this device · JSON backup available</span></footer>
         : view === "about"
           ? <footer className="status-bar"><span><Info weight="fill" /> CrowFlix 0.5.1</span><span>Copyright © 2026 Crow · AGPL-3.0-only</span></footer>
-        : <footer className="status-bar"><span><Broadcast weight="fill" /> {catalog.channels.length.toLocaleString()} catalogued · {availabilitySummary.verified.toLocaleString()} live · {availabilitySummary.ready.toLocaleString()} ready · {sourceCount.toLocaleString()} sources</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
+        : <footer className="status-bar"><span><Broadcast weight="fill" /> {sourceCount.toLocaleString()} stream sources · {catalog.channels.length.toLocaleString()} catalogued channel/feed entries · {availabilitySummary.verified.toLocaleString()} live · {availabilitySummary.ready.toLocaleString()} ready</span><span>{catalog.source}</span><button onClick={() => void loadCatalog(true)}><ArrowsClockwise /> Refresh catalogue</button></footer>}
       {playing && <Player channel={playing} channels={rankedCatalogChannels} programmes={programmes} clock={clock} now={currentProgramme(programmes, playing.id, clock)} next={nextProgramme(programmes, playing.id, clock)} playback={playback} videoRef={videoRef} zapNotice={zapNotice} onOpenWebsite={(url, title) => void openWebsite(url, title)} onSelectChannel={(channel) => zapTo(channel, channel.name)} onStepChannel={zapStep} onClose={() => setPlaying(null)} />}
       {detailsChannel && <ChannelDetails channel={detailsChannel} now={currentProgramme(programmes, detailsChannel.id, clock)} next={nextProgramme(programmes, detailsChannel.id, clock)} favourite={favourites.includes(detailsChannel.key)} onPlay={(channel) => { closeChannelDetails(); play(channel); }} onFavourite={toggleFavourite} onOpenWebsite={(url, title) => void openWebsite(url, title)} onClose={closeChannelDetails} />}
       {sourceOpen && <SourceDialog sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} epgUrl={epgUrl} setEpgUrl={setEpgUrl} loading={loading || guideLoading} onClose={closeSourceDialog} onPlaylistUrl={() => void importPlaylistUrl()} onPlaylistFile={(file) => void importPlaylistFile(file)} onEpgUrl={() => void importEpgUrl()} onEpgFile={(file) => void importEpgFile(file)} />}
       {accountOpen && <AccountSettingsDialog favourites={favourites.length} recent={recent.length} reminderSuppressed={accountPromptSuppressed} onReminderSuppressed={updateAccountPromptSuppression} onClose={closeAccountSettings} />}
       {toast && <div className="toast"><CheckCircle weight="fill" />{toast}</div>}
-      <CrowGuide view={view} channels={rankedCatalogChannels} recent={recent} onPlay={play} onGuide={() => setView("guide")} />
+      <CrowGuide
+        channels={rankedCatalogChannels}
+        programmes={programmes}
+        recent={recent}
+        favourites={favourites}
+        clock={clock}
+        availability={availabilityByChannel}
+        countries={catalog.countries}
+        regions={catalog.regions}
+        preferredCountry={country}
+        preferredCategory={category}
+        preferredLanguage={language}
+        onPlay={play}
+        onGuide={() => changeView("guide")}
+      />
     </div>
     </PlaybackAvailabilityContext.Provider>
   );
 }
 
-function CrowGuide({ view, channels, recent, onPlay, onGuide }: { view: View; channels: Channel[]; recent: string[]; onPlay: (channel: Channel) => void; onGuide: () => void }) {
+type CrowGuideProps = {
+  channels: Channel[];
+  programmes: Programme[];
+  recent: string[];
+  favourites: string[];
+  clock: Date;
+  availability: Record<string, ChannelAvailability>;
+  countries: Catalog["countries"];
+  regions: Catalog["regions"];
+  preferredCountry: string;
+  preferredCategory: string;
+  preferredLanguage: string;
+  onPlay: (channel: Channel) => void;
+  onGuide: () => void;
+};
+
+function CrowGuide({ channels, programmes, recent, favourites, clock, availability, countries, regions, preferredCountry, preferredCategory, preferredLanguage, onPlay, onGuide }: CrowGuideProps) {
   const [open, setOpen] = useState(false);
   const [curious, setCurious] = useState(false);
-  const [messageIndex, setMessageIndex] = useState(0);
+  const [draft, setDraft] = useState("");
+  const [request, setRequest] = useState<{ query: string; mode?: CrowGuideIntent }>({ query: "" });
+  const [offset, setOffset] = useState(0);
   const activityTimer = useRef<number | undefined>(undefined);
-  const recentChannels = useMemo(
-    () => recent.map((key) => channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[],
-    [channels, recent],
+  const inputRef = useRef<HTMLInputElement>(null);
+  const response = useMemo(
+    () => answerCrowGuide({
+      channels,
+      programmes,
+      recent,
+      favourites,
+      availability,
+      query: request.query,
+      mode: request.mode,
+      now: clock,
+      offset,
+      countries,
+      regions,
+      preferredCountry,
+      preferredCategory,
+      preferredLanguage,
+    }),
+    [availability, channels, clock, countries, favourites, offset, preferredCategory, preferredCountry, preferredLanguage, programmes, recent, regions, request],
   );
-  const suggested = useMemo(() => {
-    const watched = new Set(recentChannels.map((channel) => channel.key));
-    const categories = new Set(recentChannels.flatMap((channel) => channel.categories));
-    return channels.find((channel) =>
-      !watched.has(channel.key)
-      && isHomeEntertainmentChannel(channel)
-      && (categories.size === 0 || channel.categories.some((category) => categories.has(category))),
-    ) || channels.find((channel) => !watched.has(channel.key) && isHomeEntertainmentChannel(channel));
-  }, [channels, recentChannels]);
-  const messages = useMemo(() => [
-    suggested
-      ? `I found ${suggested.name} based on what you have opened recently.`
-      : "I can help you find something to watch.",
-    view === "guide"
-      ? "I am watching the live channel guide with you."
-      : "Open the channel guide when you want to know what is on now.",
-    "Your viewing suggestions stay on this device.",
-  ], [suggested, view]);
+  const askMode = (mode: CrowGuideIntent) => {
+    setRequest({ query: "", mode });
+    setDraft("");
+    setOffset(0);
+  };
+  const submitQuestion = (event: React.FormEvent) => {
+    event.preventDefault();
+    setRequest({ query: draft.trim() });
+    setOffset(0);
+  };
   useEffect(() => {
     const reactToPointer = () => {
       setCurious(true);
@@ -1283,11 +1359,43 @@ function CrowGuide({ view, channels, recent, onPlay, onGuide }: { view: View; ch
     };
   }, []);
   useEffect(() => {
-    const timer = window.setInterval(() => setMessageIndex((index) => (index + 1) % messages.length), 13_000);
-    return () => window.clearInterval(timer);
-  }, [messages.length]);
-  return <aside className={`crow-guide ${curious ? "crow-guide-curious" : ""}`} aria-label="CrowFlix helper">
-    {open && <div className="crow-guide-bubble" role="status"><button aria-label="Close CrowFlix helper" onClick={() => setOpen(false)}><X /></button><strong>CrowFlix guide</strong><p>{messages[messageIndex]}</p><small>Suggestions stay on this device.</small>{suggested && <button className="crow-guide-action" onClick={() => { onPlay(suggested); setOpen(false); }}><Play weight="fill" /> Show me {suggested.name}</button>}<button className="crow-guide-link" onClick={() => { onGuide(); setOpen(false); }}><CalendarDots /> What is on now?</button></div>}
+    if (!open) return undefined;
+    inputRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
+  return <aside className={`crow-guide ${open ? "crow-guide-open" : ""} ${curious ? "crow-guide-curious" : ""}`} aria-label="CrowFlix helper">
+    {open && <div className="crow-guide-bubble" role="dialog" aria-modal="false" aria-labelledby="crow-guide-title">
+      <button aria-label="Close CrowFlix helper" onClick={() => setOpen(false)}><X /></button>
+      <strong id="crow-guide-title">Baby CrowBot</strong>
+      <span className="crow-guide-kicker">Your local CrowFlix guide</span>
+      <form className="crow-guide-search" onSubmit={submitQuestion}>
+        <MagnifyingGlass />
+        <input ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={300} aria-label="Ask Baby CrowBot" placeholder="Try Australian comedy or ABC News" />
+        <button type="submit" disabled={!draft.trim()} aria-label="Ask Baby CrowBot"><CaretRight weight="bold" /></button>
+      </form>
+      <div className="crow-guide-quick" aria-label="Baby CrowBot quick questions">
+        <button onClick={() => askMode("now")}><CalendarDots /> On now</button>
+        <button onClick={() => askMode("favourites")}><Heart /> My List</button>
+        <button onClick={() => askMode("recent")}><Clock /> Recent</button>
+      </div>
+      <p className="crow-guide-answer" aria-live="polite">{response.message}</p>
+      {response.candidates.length > 0 && <div className="crow-guide-results">
+        {response.candidates.map(({ channel, programme, reason, availability: state }) => <button key={channel.key} className="crow-guide-result" data-availability={state} onClick={() => { onPlay(channel); setOpen(false); }}>
+          <span className="crow-guide-result-copy"><strong>{channel.name}</strong>{programme && <b>{programme.title}</b>}<small>{reason}</small></span>
+          <span className="crow-guide-result-action"><em>{availabilityLabel(state)}</em><Play weight="fill" /></span>
+        </button>)}
+      </div>}
+      <div className="crow-guide-actions">
+        {response.total > response.candidates.length && <button className="crow-guide-action" onClick={() => setOffset(response.nextOffset)}><ArrowsClockwise /> Something else</button>}
+        {response.needsGuide && <button className="crow-guide-link" onClick={() => { onGuide(); setOpen(false); }}><CalendarDots /> Load live guide</button>}
+        {(request.query || request.mode) && <button className="crow-guide-reset" onClick={() => { setRequest({ query: "" }); setDraft(""); setOffset(0); }}>Start over</button>}
+      </div>
+      <small className="crow-guide-privacy">Catalogue search, My List, recent channels and loaded guide data stay on this device. No external AI.</small>
+    </div>}
     <button className="crow-guide-avatar" aria-expanded={open} aria-label="Open CrowFlix helper" onClick={() => setOpen((value) => !value)}><img src={CROW_HELPER_PIXEL_IMAGE} alt="Animated pixel CrowFlix helper" /><span>?</span></button>
   </aside>;
 }
@@ -1509,7 +1617,7 @@ function LiveView({ catalog, channels, mode, setMode, category, setCategory, cou
     provider !== "all" ? provider : null,
   ].filter((label): label is string => Boolean(label));
   return <div className="browse-page">
-    <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television · Australia, United States & English first</span><h1>Browse Live TV</h1><p>The complete matching catalogue stays visible. Australian and American English channels lead by default; every country and language remains searchable, filterable, and reachable.</p></div><div className="catalog-number"><strong>{visibleChannels.length.toLocaleString()}</strong><span>catalogued · {matchingSources.toLocaleString()} sources</span></div></div>
+    <div className="page-hero"><div><span className="overline"><Television /> Worldwide live television · Australia, United States & English first</span><h1>Browse Live TV</h1><p>The complete matching catalogue stays visible. Australian and American English channels lead by default; every country and language remains searchable, filterable, and reachable.</p></div><div className="catalog-number" data-channel-count={visibleChannels.length} data-source-count={matchingSources}><strong>{matchingSources.toLocaleString()}</strong><span>stream sources · {visibleChannels.length.toLocaleString()} catalogued channel/feed entries</span></div></div>
     <div className="browse-layout"><aside className="browse-sidebar"><h3>Explore by</h3>{browseModes.map(([id, icon, label]) => <button key={id} className={mode === id ? "active" : ""} aria-expanded={exploreOpen === id} aria-controls="live-explore-popout" onClick={() => { setMode(id); setExploreOpen((open) => open === id ? null : id); }}>{icon}<span>{label}</span><CaretRight /></button>)}<div className="active-filters"><span>Active filters</span>{activeFilterLabels.map((label, index) => <b key={`${label}-${index}`}>{label}</b>)}<button onClick={clearAll}>Clear all</button></div><button className="account-sidebar-button" onClick={() => { setExploreOpen(null); onAccount(); }}><UserCircle /><span>Account settings</span><CaretRight /></button></aside>
       {exploreOpen && <section id="live-explore-popout" className="explore-popout" role="dialog" aria-label={`Choose ${titleCase(exploreOpen)}`}><header><span><ListBullets /> Explore {titleCase(exploreOpen)}</span><button aria-label="Close Explore menu" onClick={() => setExploreOpen(null)}><X /></button></header><div className="explore-popout-options"><button className={selected === "all" ? "active" : ""} onClick={() => { select("all"); setExploreOpen(null); }}><span>All {titleCase(exploreOpen)}</span><small>{visibleChannels.length.toLocaleString()}</small></button>{modeOptions.map((item) => <button key={item.id} className={selected === item.id ? "active" : ""} onClick={() => { select(item.id); setExploreOpen(null); }}><span>{item.name}</span><small>{item.count.toLocaleString()}</small></button>)}</div></section>}
       <section className="browse-results"><div className="result-heading"><div><h2>{selected === "all" ? `All ${titleCase(mode)}` : modeOptions.find((item) => item.id === selected)?.name}</h2><span>Showing {visibleChannels.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, visibleChannels.length)} of {visibleChannels.length.toLocaleString()}</span></div><div className="availability-switch"><button className={catalogOrder === "preferred" ? "active" : ""} onClick={() => setCatalogOrder("preferred")}>Australia / US / English first</button><button className={catalogOrder === "alphabetical" ? "active" : ""} onClick={() => setCatalogOrder("alphabetical")}>A–Z</button></div></div>{visibleChannels.length ? <><div className="channel-grid">{pageChannels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><Pagination page={safePage} pageCount={pageCount} onPage={setPage} /></> : <EmptyState title="No matching channels" copy="Clear a filter or search for something else." />}</section></div>

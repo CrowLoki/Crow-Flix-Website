@@ -1,6 +1,6 @@
 # Crow-Flix IPTV ecosystem integration
 
-Last audited: 23 August 2026
+Last audited: 12 September 2026
 
 This document is the integration contract for the independent browser website.
 It prevents future work from treating one playlist or a partial API join as the
@@ -86,14 +86,12 @@ locally; public M3U URLs use the bounded SSRF-guarded relay. Exact channel IDs
 gain alternate routes, genuinely new channels extend the matching browse
 dimensions, and all imported routes retain personal-source provenance.
 
-Live TV always contains the complete matching result set. `Working first` and
-`A–Z` change order only. Health or availability never silently removes entries.
-The bounded readiness queue follows the actual 48-card Live TV page: up to two
-diverse source identities are tried sequentially per visible channel until one
-direct/relay route proves media. At most three channels run concurrently and
-results remain cached for 15 minutes. Changing pages changes the check window;
-health-driven reordering does not recursively chase through or shrink the
-catalogue.
+Live TV always contains the complete matching result set. Audience-first and
+`A–Z` ordering change position only; health or availability never silently
+removes entries. Browsing does not trigger background media requests. Once the
+viewer opens a channel, a bounded selected-channel readiness check tries diverse
+source identities until one direct/relay route proves media, and caches results
+for 15 minutes. Readiness-driven reordering never shrinks the catalogue.
 
 Current upstream SRT, RTMP, RTSP, and MMSH records are retained with an honest
 `EXTERNAL` availability state rather than discarded by the HTTP normalizer.
