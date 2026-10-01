@@ -84,6 +84,22 @@ async function removeIsolatedProfile() {
   }
 }
 
+function waitForBrowserExit(browserProcess, timeoutMs) {
+  if (!browserProcess || browserProcess.exitCode !== null || browserProcess.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    const finish = (exited) => {
+      clearTimeout(timer);
+      browserProcess.removeListener("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    browserProcess.once("exit", onExit);
+  });
+}
+
 let browser;
 let page;
 let stderr = "";
@@ -306,10 +322,14 @@ try {
     .filter((url) => /(?:\\.m3u8|\\.mpd)(?:[?#]|$)|\\/playback(?:[/?]|$)/i.test(url))
     .filter((url) => !/\\/raw-tv\\.m3u8(?:[?#]|$)/i.test(decodeURIComponent(url)))`);
   await evaluate("document.querySelector('.browse-results .channel-card')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))");
-  await waitFor("Boolean(document.querySelector('.channel-preview'))", 5_000);
+  await delay(1_000);
   const hoverPreview = await evaluate(`({
-    muted: document.querySelector('.channel-preview video')?.muted === true,
-    label: document.querySelector('.channel-preview span')?.textContent || ''
+    noVideo: !document.querySelector('.channel-preview video'),
+    noPlayer: !document.querySelector('.player'),
+    streamRequests: performance.getEntriesByType('resource').filter((entry) => {
+      const url = decodeURIComponent(entry.name);
+      return /(?:\\.m3u8|\\.mpd)(?:[?#]|$)|\\/stream(?:[/?]|$)/i.test(url);
+    }).length,
   })`);
   await evaluate("document.querySelector('.browse-results .channel-card')?.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }))");
   await waitFor("!document.querySelector('.channel-preview')");
@@ -402,7 +422,7 @@ try {
     explorePopout: explore.title.includes('Explore') && explore.options > 1 && explore.overlay,
     fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy && live.preferredOrder && live.honestTotals,
     noBackgroundStreamProbing: backgroundStreamRequests.length === 0,
-    hoverPreview: hoverPreview.muted && hoverPreview.label.length > 0,
+    noHoverStreaming: hoverPreview.noVideo && hoverPreview.noPlayer && hoverPreview.streamRequests === 0,
     detailsDialog: details.channelId && details.sources && details.providers,
     personalSourcesDialog: sourceDialog.playlist && sourceDialog.guide,
     guideAudience: guideAudience.englishFirst && guideAudience.australiaFirst && guideAudience.unitedStatesSecond,
@@ -423,13 +443,19 @@ try {
     assertions,
     catalogueStatus: home.status,
   }, null, 2));
-  await page.send("Browser.close").catch(() => undefined);
 } finally {
+  // Let only this isolated browser close its child processes and release its
+  // profile before falling back to terminating the process we spawned.
+  if (page && browser && browser.exitCode === null && browser.signalCode === null) {
+    await Promise.race([
+      page.send("Browser.close").catch(() => undefined),
+      delay(2_000),
+    ]);
+  }
   page?.socket.close();
-  if (browser && browser.exitCode === null) browser.kill();
-  await Promise.race([
-    new Promise((resolve) => browser?.once("exit", resolve)),
-    delay(5_000),
-  ]);
+  if (!await waitForBrowserExit(browser, 15_000)) {
+    browser.kill();
+    await waitForBrowserExit(browser, 5_000);
+  }
   await removeIsolatedProfile();
 }

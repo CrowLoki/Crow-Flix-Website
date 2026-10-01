@@ -127,10 +127,18 @@ is returned as `description`):
 }
 ```
 
-Successful `/epg` responses carry `Cache-Control: no-store`. Every guide
-request must reach the Worker so its one-time Turnstile token is validated;
-browser or shared HTTP caching must not bypass that check. Any future caching
-of upstream guide files belongs behind verification inside the Worker.
+Successful `/epg` responses carry `Cache-Control: no-store`. Every new guide
+request reaches the Worker and validates its one-time Turnstile token before
+cache lookup. Parsed successful nonempty results of at most 8 MiB are stored
+through the existing Cache API for ten minutes, keyed by the exact effective
+country, timezone, IDs, names and provider aliases. A hit preserves `updatedAt`
+and avoids all upstream guide downloads and parsing. Cache failures use the
+normal bounded pipeline. `X-CrowFlix-Guide-Cache: HIT|MISS` supports verification
+without logging request bodies or tokens. Cache entries are local to each
+Cloudflare data centre; hits still count as Worker invocations.
+
+The browser may reuse previously verified listings for one hour without issuing
+a new relay request. It stores no token and never HTTP-caches `/epg` responses.
 
 Input rules: 1-2000 channel ids, each ≤ 200 chars, no control characters;
 `country` optional but must be 2-8 alphanumerics when present.

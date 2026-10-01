@@ -1,5 +1,6 @@
 import { RelayError } from "./errors";
 import { currentGuideProgrammeWindow, loadAutoEpg } from "./epg";
+import { loadCachedGuide } from "./guideCache";
 import { rewriteM3u8 } from "./m3u8";
 import { concatChunks, readBounded } from "./streams";
 import {
@@ -33,7 +34,7 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "*",
   "Access-Control-Expose-Headers":
-    "Content-Length, Content-Range, Accept-Ranges",
+    "Content-Length, Content-Range, Accept-Ranges, X-CrowFlix-Guide-Cache",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -179,19 +180,28 @@ async function handleEpg(
       }
     }
   }
-  const result = await loadAutoEpg(
-    country,
-    channelIds,
-    fetch,
-    timeZone,
-    namesByChannel,
-    aliasesByProviderId,
-    currentGuideProgrammeWindow(),
+  let cacheHit = false;
+  const result = await loadCachedGuide(
+    { country, channelIds, timeZone, namesByChannel, aliasesByProviderId },
+    url.origin,
+    () => loadAutoEpg(
+      country,
+      channelIds,
+      fetch,
+      timeZone,
+      namesByChannel,
+      aliasesByProviderId,
+      currentGuideProgrammeWindow(),
+    ),
+    undefined,
+    () => { cacheHit = true; },
   );
   // Every browser guide request must reach this handler so its one-time
   // Turnstile token is verified. Upstream guide caching belongs inside the
   // Worker, never in a browser or shared HTTP cache in front of verification.
-  return json(result);
+  const response = json(result);
+  response.headers.set("X-CrowFlix-Guide-Cache", cacheHit ? "HIT" : "MISS");
+  return response;
 }
 
 async function handleFetch(url: URL): Promise<Response> {

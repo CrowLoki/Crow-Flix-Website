@@ -5,8 +5,8 @@
 // Differences from the desktop pipeline, by design:
 // - The fixed Apsattv FAST-playlist snapshots are downloaded through the
 //   bounded CrowFlix relay path rather than directly from the browser.
-// - Caching uses the Cache API (12 h read-through, stale-on-failure) instead
-//   of the Tauri app-data cache file.
+// - Production browsers load a prepared regional snapshot from Pages. The
+//   same pure builder runs once during deployment, rather than per visitor.
 
 import type {
   CatalogSourceHealth,
@@ -14,13 +14,12 @@ import type {
   TransportHint,
 } from "./playback/types";
 import {
-  loadAdditivePlaylists,
   type AdditivePlaylistEntry,
 } from "./additivePlaylists";
 import { RELAY_BASE } from "./relayClient";
+import { loadPreparedCatalog } from "./preparedCatalog";
 import {
   isFreshCatalogHealth,
-  loadStreamHealthIndex,
   sourceUsesLiteralIp,
   streamSourceHealthIdentity,
 } from "./streamHealthIndex";
@@ -28,9 +27,6 @@ import {
 export const WEB_CATALOG_CACHE_NAME = "crowflix-catalog-v8";
 export const WEB_CATALOG_CACHE_KEY = "https://crowflix.cache/web-catalog-v8";
 export const MAIN_FEED_OPTION_ID = "__main__";
-const WEB_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
-const API_BASE = "https://iptv-org.github.io/api";
-const FETCH_TIMEOUT_MS = 45_000;
 const OPTIONAL_FAST_FETCH_TIMEOUT_MS = 12_000;
 const MAX_OPTIONAL_FAST_PLAYLIST_BYTES = 2 * 1024 * 1024;
 const MAX_OPTIONAL_FAST_PLAYLIST_ENTRIES = 50_000;
@@ -1362,107 +1358,9 @@ ${logo.feed}`;
   };
 }
 
-// --- browser loading with Cache API read-through ---
-
-type CachedCatalog = { cachedAt: number; catalog: WebCatalog };
-
-async function readCache(): Promise<CachedCatalog | null> {
-  try {
-    if (typeof caches === "undefined") return null;
-    const cache = await caches.open(WEB_CATALOG_CACHE_NAME);
-    const response = await cache.match(WEB_CATALOG_CACHE_KEY);
-    if (!response) return null;
-    const parsed = await response.json() as CachedCatalog;
-    return parsed?.catalog?.channels?.length ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-async function writeCache(catalog: WebCatalog): Promise<void> {
-  try {
-    if (typeof caches === "undefined") return;
-    const cache = await caches.open(WEB_CATALOG_CACHE_NAME);
-    const payload: CachedCatalog = { cachedAt: Date.now(), catalog };
-    await cache.put(WEB_CATALOG_CACHE_KEY, new Response(JSON.stringify(payload)));
-  } catch {
-    // Caching is best-effort; the catalogue still loads without it.
-  }
-}
-
-async function fetchJson<T>(name: string): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${API_BASE}/${name}.json`, { signal: controller.signal });
-    if (!response.ok) throw new Error(`IPTV-org ${name} returned HTTP ${response.status}`);
-    return await response.json() as T;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Load the real IPTV-org catalogue in the browser. Twelve-hour Cache API
- * read-through; a failed refresh serves the stale cache rather than nothing.
- */
+/** Load one prepared static asset; catalogue refresh never invokes the relay. */
 export async function loadWebCatalog(force = false): Promise<WebCatalog> {
-  const cached = await readCache();
-  if (!force && cached && Date.now() - cached.cachedAt < WEB_CATALOG_TTL_MS) {
-    const freshHints = refreshSourceOrdering(cached.catalog.channels);
-    return {
-      ...cached.catalog,
-      source: `${refreshedCatalogSource(cached.catalog.source, freshHints)} · browser cache`,
-    };
-  }
-  try {
-    const requiredCatalog = Promise.all([
-        fetchJson<ApiChannel[]>("channels"),
-        fetchJson<ApiFeed[]>("feeds"),
-        fetchJson<ApiLogo[]>("logos"),
-        fetchJson<ApiStream[]>("streams"),
-        fetchJson<ApiCategory[]>("categories"),
-        fetchJson<ApiLanguage[]>("languages"),
-        fetchJson<ApiCountry[]>("countries"),
-        fetchJson<ApiRegion[]>("regions"),
-        fetchJson<ApiSubdivision[]>("subdivisions"),
-        fetchJson<ApiCity[]>("cities"),
-        fetchJson<ApiTimezone[]>("timezones"),
-        fetchJson<ApiBlock[]>("blocklist"),
-      ]);
-    const [
-      [channels, feeds, logos, streams, categories, languages, countries, regions, subdivisions, cities, timezones, blocklist],
-      optionalFastFallbacks,
-      streamHealth,
-      additivePlaylistEntries,
-    ] = await Promise.all([
-      requiredCatalog,
-      loadOptionalFastFallbacks().catch(() => []),
-      loadStreamHealthIndex().catch(() => null),
-      loadAdditivePlaylists(
-        Intl.DateTimeFormat().resolvedOptions().timeZone,
-      ).catch(() => []),
-    ]);
-    const catalog = buildCatalogFromApi(
-      { channels, feeds, logos, streams, categories, languages, countries, regions, subdivisions, cities, timezones, blocklist },
-      new Date(),
-      optionalFastFallbacks,
-      additivePlaylistEntries,
-    );
-    const matchedHealth = streamHealth
-      ? applyStreamHealthHints(catalog.channels, streamHealth.hints)
-      : 0;
-    if (matchedHealth > 0) catalog.source += " + recent source health";
-    void writeCache(catalog);
-    return catalog;
-  } catch (error) {
-    if (cached) {
-      const freshHints = refreshSourceOrdering(cached.catalog.channels);
-      return {
-        ...cached.catalog,
-        source: `${refreshedCatalogSource(cached.catalog.source, freshHints)} · offline cache`,
-      };
-    }
-    throw error instanceof Error ? error : new Error(String(error));
-  }
+  const result = await loadPreparedCatalog(force);
+  const freshHints = refreshSourceOrdering(result.channels);
+  return { ...result, source: refreshedCatalogSource(result.source, freshHints) };
 }
