@@ -8,6 +8,13 @@ browser. The application includes search, categories, regions, favourites,
 recent channels, programme guides, source failover, HLS and MPEG-DASH playback,
 hardware-style zapping, and the user-managed Web Library.
 
+Catalogue data is prepared once per daily Pages build and served as one static
+gzip snapshot for the visitor's Australian region. It is reused in browser
+storage for 24 hours; Refresh catalogue reloads the published snapshot. Visitors
+do not download the upstream metadata or invoke the Worker to build a catalogue.
+See [`docs/OPERATING-USAGE.md`](docs/OPERATING-USAGE.md) for the refresh schedule,
+cache lifetimes, and measured request reductions.
+
 The Live TV total distinguishes stream sources from deduplicated logical
 channel/feed entries. Alternate routes are retained for failover and source
 choice without being mislabelled as additional channels.
@@ -89,18 +96,15 @@ preserves redirected HLS, DASH child requests, and byte-range media.
 
 The catalogue distinguishes recently played `LIVE` routes, selected-channel
 `READY` routes, unverified entries, part-time sources, regional sources, and
-temporarily failed entries. CrowFlix does not probe thousands of streams while
-the viewer browses. It begins a bounded readiness check only after the viewer
-opens a channel, caches each result for 15 minutes, and reads no more than the
-manifest plus the key, initialization data, and first media bytes needed to
-prove that a route starts. Every matching regional, part-time, offline, and
+temporarily failed entries. Video requests begin when the viewer opens a channel;
+hovering cards does not start a stream. The playback controller checks and tries
+that selected channel's routes, with no parallel background readiness scan.
+Every matching regional, part-time, offline, and
 unverified catalogue entry remains visible and reachable.
 
-Opening a multi-source channel starts a bounded check led by its current
-preferred source, its best HTTPS option, and an unverified alternative.
-As those checks finish, CrowFlix reorders only the routes it has not tried yet,
-so a newly proven route can jump ahead without restarting or replaying a failed
-attempt. Remaining checks stop as soon as one route proves ready. The route
+Opening a multi-source channel uses its preferred route and existing health
+evidence. Failed routes fall through to the remaining preserved alternatives.
+Successful playback records local evidence for future source selection. The route
 indicator in the player opens a complete source chooser, where any preserved
 feed and its direct or relay delivery route can be selected explicitly without
 exposing provider URLs, credentials, or request headers.
@@ -136,8 +140,8 @@ often work from the scanner's network while rejecting the Cloudflare relay an
 HTTPS browser needs, so CrowFlix waits for local evidence before promoting them.
 
 The catalogue is additive. In addition to every current non-blocklisted
-IPTV-org stream, CrowFlix loads bounded timezone-appropriate Australian, New
-Zealand, and world provider playlists through the relay. Exact mapped channels
+IPTV-org stream, the build downloads bounded Australian, New Zealand, and world
+provider playlists directly and prepares timezone-appropriate snapshots. Exact mapped channels
 gain alternate sources; genuinely absent channels are retained as new entries
 with their public playlist provenance, headers, logo, broadcast area, and
 timezone. Failure of an optional playlist never replaces the base catalogue.
@@ -156,6 +160,12 @@ browser obtains a one-time `epg_load` token, and the relay validates it through
 Siteverify with exact action and hostname checks before performing guide
 downloads and XML parsing. Catalogue browsing and video playback remain
 unchallenged. Crow-Flix has no payment or Stripe integration.
+
+Previously verified guide results are reused on the device for one hour, including
+after reloads. Manual Refresh reuses results younger than ten minutes. There is no
+automatic network refresh timer. Every new relay request still passes Siteverify;
+the Worker then reuses a matching parsed guide for up to ten minutes before
+downloading and parsing upstream data again.
 
 After verification, the relay uses full IPTV-org guide mappings first, then a
 timezone-specific Australian regional guide when applicable, followed by the

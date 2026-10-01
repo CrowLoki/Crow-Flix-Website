@@ -1,0 +1,25 @@
+name: Refresh prepared catalogue
+
+on:
+  schedule:
+    - cron: "23 18 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: catalogue-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Rebuild the existing Pages production branch
+        env:
+          CATALOGUE_REBUILD_HOOK: ${{ secrets.CROWFLIX_CATALOG_REBUILD_HOOK }}
+        run: |
+          test -n "$CATALOGUE_REBUILD_HOOK"
+          curl --fail --silent --show-error --max-time 45 \
+            --request POST "$CATALOGUE_REBUILD_HOOK" --output /dev/null

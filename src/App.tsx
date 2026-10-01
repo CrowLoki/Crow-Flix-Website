@@ -79,18 +79,10 @@ import {
 } from "./playback/usePlaybackController";
 import { sourceIdentifier, type SourceHealth, type StreamSource } from "./playback/types";
 import {
-  browserPreflightRoutes,
-  isFreshPreflight,
-  preflightSource,
   readSourcePreflights,
-  recordSourcePreflight,
   SOURCE_PREFLIGHT_CHANGED_EVENT,
   type SourcePreflight,
 } from "./playback/preflight";
-import {
-  findReadyRoute,
-  PLAYING_CHANNEL_PREFLIGHT_SOURCE_LIMIT,
-} from "./playback/preflightWindow";
 import {
   availabilityLabel,
   availabilityRank,
@@ -122,6 +114,7 @@ import {
 } from "./webDestinations";
 import { appendZapDigit, resolveZapNumber, zapTarget } from "./zap";
 import { loadWebCatalog } from "./webCatalog";
+import { guideIsFresh, GUIDE_REFRESH_INTERVAL_MS, readSavedGuide, saveGuide } from "./guideBrowserCache";
 import { MAIN_FEED_OPTION_ID } from "./webCatalog";
 import {
   loadRelayGuide,
@@ -532,6 +525,8 @@ export default function App() {
   );
   const videoRef = useRef<HTMLVideoElement>(null);
   const guideCache = useRef(new Map<string, GuideResult>());
+  const guideContexts = useRef(new Map<string, string>());
+  const guideRequestGeneration = useRef(0);
   const personalGuide = useRef<GuideResult | null>(null);
   const skipInitialWebSave = useRef(true);
   const previousChannelKey = useRef<string | null>(null);
@@ -781,6 +776,9 @@ export default function App() {
     force = false,
     turnstileToken?: string,
   ) => {
+    const generation = ++guideRequestGeneration.current;
+    const isCurrentRequest = () => generation === guideRequestGeneration.current;
+    setGuideLoading(false);
     const targetCountry = canonicalCountryCode(code);
     const countryChannels = catalog.channels.filter(
       (channel) => channelMatchesCountry(
@@ -796,8 +794,19 @@ export default function App() {
       setGuideStatus(`No channels are available for ${countryName(targetCountry)}`);
       return;
     }
-    const cached = guideCache.current.get(targetCountry);
-    if (cached && !force) {
+    const guideChannels = uniqueGuideChannels(countryChannels);
+    const guideTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const guideContext = JSON.stringify({ channels: guideChannels, timeZone: guideTimeZone });
+    const memoryGuide = isDesktop || guideContexts.current.get(targetCountry) === guideContext
+      ? guideCache.current.get(targetCountry)
+      : undefined;
+    const cached = memoryGuide && guideIsFresh(memoryGuide)
+      ? memoryGuide
+      : !isDesktop ? await readSavedGuide(targetCountry, guideChannels, guideTimeZone) : null;
+    if (!isCurrentRequest()) return;
+    if (cached && (!force || guideIsFresh(cached, GUIDE_REFRESH_INTERVAL_MS))) {
+      guideCache.current.set(targetCountry, cached);
+      guideContexts.current.set(targetCountry, guideContext);
       setGuideNeedsVerification(false);
       setGuideVerificationError(null);
       applyGuideResult(cached);
@@ -821,6 +830,7 @@ export default function App() {
         setGuideNeedsVerification(false);
         setGuideVerificationError(null);
         guideCache.current.set(targetCountry, result);
+        guideContexts.current.set(targetCountry, guideContext);
         applyGuideResult(result);
         return;
       }
@@ -837,13 +847,17 @@ export default function App() {
       try {
         const result = await loadRelayGuide(
           targetCountry,
-          uniqueGuideChannels(countryChannels),
+          guideChannels,
           turnstileToken,
-          Intl.DateTimeFormat().resolvedOptions().timeZone,
+          guideTimeZone,
         );
+        if (!isCurrentRequest()) return;
         guideCache.current.set(targetCountry, result);
+        guideContexts.current.set(targetCountry, guideContext);
+        void saveGuide(targetCountry, guideChannels, guideTimeZone, result);
         applyGuideResult(result);
       } catch (error) {
+        if (!isCurrentRequest()) return;
         setProgrammes(personalGuide.current?.programmes || []);
         const message = error instanceof Error ? error.message : String(error);
         setGuideStatus(message);
@@ -851,29 +865,27 @@ export default function App() {
           setGuideNeedsVerification(true);
           setGuideVerificationError(message);
         }
-      } finally { setGuideLoading(false); }
+      } finally { if (isCurrentRequest()) setGuideLoading(false); }
       return;
     }
     setGuideLoading(true);
     setGuideStatus(`Matching ${countryName(targetCountry)} channels to IPTV-org programme sources…`);
     try {
       const result = await invoke<GuideResult>("load_auto_epg", { country: targetCountry, channelIds: uniqueChannelIds(countryChannels) });
+      if (!isCurrentRequest()) return;
       guideCache.current.set(targetCountry, result);
       applyGuideResult(result);
     } catch (error) {
+      if (!isCurrentRequest()) return;
       setProgrammes(personalGuide.current?.programmes || []);
       setGuideStatus(error instanceof Error ? error.message : String(error));
-    } finally { setGuideLoading(false); }
+    } finally { if (isCurrentRequest()) setGuideLoading(false); }
   }, [applyGuideResult, catalog.channels, catalog.regions, catalog.source, isDesktop]);
 
   useEffect(() => {
     if (view === "guide" && catalog.channels.length) void loadGuide(guideCountry);
+    return () => { guideRequestGeneration.current += 1; };
   }, [catalog.channels, guideCountry, loadGuide, view]);
-  useEffect(() => {
-    if (view !== "guide" || !catalog.channels.length) return;
-    const timer = window.setInterval(() => { void loadGuide(guideCountry, true); }, 4 * 60 * 60 * 1000);
-    return () => window.clearInterval(timer);
-  }, [catalog.channels.length, guideCountry, loadGuide, view]);
 
   const play = useCallback((channel: Channel) => {
     setPlaying((current) => {
@@ -884,33 +896,6 @@ export default function App() {
     });
     setRecent((items) => [channel.key, ...items.filter((key) => key !== channel.key)].slice(0, 24));
   }, []);
-
-  useEffect(() => {
-    if (!playing || isDesktop || catalog.source.includes("preview")) return undefined;
-    const controller = new AbortController();
-    const routes = browserPreflightRoutes(
-      channelSources(playing),
-      PLAYING_CHANNEL_PREFLIGHT_SOURCE_LIMIT,
-    );
-    void findReadyRoute(
-      routes,
-      (source) => {
-        const current = readSourcePreflights()[sourceIdentifier(source)];
-        return isFreshPreflight(current) ? current.status : null;
-      },
-      async (source) => {
-        try {
-          const result = await preflightSource(source, undefined, controller.signal);
-          if (!controller.signal.aborted) recordSourcePreflight(source, result);
-          return result.status;
-        } catch {
-          return "offline";
-        }
-      },
-      controller.signal,
-    );
-    return () => controller.abort();
-  }, [catalog.source, isDesktop, playing]);
 
   const toggleFavourite = useCallback((channel: Channel) => {
     setFavourites((items) => items.includes(channel.key) ? items.filter((key) => key !== channel.key) : [...items, channel.key]);
@@ -1470,41 +1455,9 @@ function ChannelRail({ title, channels, programmes, clock, favourites, onPlay, o
   return <section className="rail-section"><div className="section-heading"><h2>{title}</h2><span>{channels.length.toLocaleString()} channels</span></div><div className="rail-wrap"><button className="rail-arrow left" aria-label={`Scroll ${title} left`} onClick={() => railRef.current?.scrollBy({ left: -900, behavior: "smooth" })}><CaretLeft /></button><div className="channel-rail" ref={railRef}>{channels.map((channel) => <ChannelCard key={channel.key} channel={channel} programme={currentProgramme(programmes, channel.id, clock)} favourite={favourites.includes(channel.key)} onPlay={onPlay} onFavourite={onFavourite} onInfo={onInfo} />)}</div><button className="rail-arrow right" aria-label={`Scroll ${title} right`} onClick={() => railRef.current?.scrollBy({ left: 900, behavior: "smooth" })}><CaretRight /></button></div></section>;
 }
 
-function HoverPreview({ channel }: { channel: Channel }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const previewTarget = useMemo(() => ({
-    ...channel,
-    sources: channelSources(channel).flatMap(toWebPlayableSources),
-  }), [channel]);
-  const playback = usePlaybackController(previewTarget, videoRef);
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = true;
-    video.volume = 0;
-  }, [playback.status]);
-  return <div className="channel-preview" aria-hidden="true">
-    <video ref={videoRef} muted autoPlay playsInline poster={MASCOT_IMAGE} />
-    <span>{playback.status === "playing" ? "MUTED PREVIEW" : playback.status === "failed" ? "PREVIEW UNAVAILABLE" : "STARTING PREVIEW…"}</span>
-  </div>;
-}
-
 function ChannelCard({ channel, programme, favourite, onPlay, onFavourite, onInfo }: { channel: Channel; programme?: Programme; favourite: boolean; onPlay: (channel: Channel) => void; onFavourite: (channel: Channel) => void; onInfo: (channel: Channel) => void }) {
   const availability = useContext(PlaybackAvailabilityContext)[channel.key] || "unverified";
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const previewTimer = useRef<number | undefined>(undefined);
-  const canPreview = channelSources(channel).length > 0;
-  const startPreview = () => {
-    if (!canPreview) return;
-    window.clearTimeout(previewTimer.current);
-    previewTimer.current = window.setTimeout(() => setPreviewOpen(true), 650);
-  };
-  const stopPreview = () => {
-    window.clearTimeout(previewTimer.current);
-    setPreviewOpen(false);
-  };
-  useEffect(() => () => window.clearTimeout(previewTimer.current), []);
-  return <article className="channel-card" onPointerEnter={(event) => { if (event.pointerType === "mouse") startPreview(); }} onPointerLeave={stopPreview}><button className="card-main" onClick={() => onPlay(channel)}><div className="card-image">{channel.logo ? <img src={channel.logo} alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; event.currentTarget.className = "fallback-logo"; }} /> : <img className="fallback-logo" src={BRAND_ICON} alt="" />}{previewOpen && <HoverPreview channel={channel} />}<span className={`live-badge availability-${availability}`}>{availabilityLabel(availability)}</span><span className="quality-badge">{channelQuality(channel)}</span><span className="play-overlay"><Play weight="fill" /></span></div><div className="card-copy"><strong>{programme?.title || channel.name}</strong><span>{channel.name}</span><small>{countryName(channel.country)} · {titleCase(channel.categories[0])}</small></div></button><button className="details-button" onClick={() => onInfo(channel)} aria-label={`Show ${channel.name} details`}><Info /></button><button className="heart-button" onClick={() => onFavourite(channel)} aria-label={`Toggle ${channel.name} favourite`}><Heart weight={favourite ? "fill" : "regular"} /></button></article>;
+  return <article className="channel-card"><button className="card-main" onClick={() => onPlay(channel)}><div className="card-image">{channel.logo ? <img src={channel.logo} loading="lazy" decoding="async" alt="" onError={(event) => { event.currentTarget.src = BRAND_ICON; event.currentTarget.className = "fallback-logo"; }} /> : <img className="fallback-logo" src={BRAND_ICON} loading="lazy" decoding="async" alt="" />}<span className={`live-badge availability-${availability}`}>{availabilityLabel(availability)}</span><span className="quality-badge">{channelQuality(channel)}</span><span className="play-overlay"><Play weight="fill" /></span></div><div className="card-copy"><strong>{programme?.title || channel.name}</strong><span>{channel.name}</span><small>{countryName(channel.country)} · {titleCase(channel.categories[0])}</small></div></button><button className="details-button" onClick={() => onInfo(channel)} aria-label={`Show ${channel.name} details`}><Info /></button><button className="heart-button" onClick={() => onFavourite(channel)} aria-label={`Toggle ${channel.name} favourite`}><Heart weight={favourite ? "fill" : "regular"} /></button></article>;
 }
 
 type LiveViewProps = {

@@ -28,10 +28,13 @@ The website stores the following data locally in browser storage:
 - source-health, cooldown, and preferred-source results created only while a
   visitor is playing a selected channel; and
 - cached catalogue metadata used for faster startup and stale-on-failure
-  fallback.
+  fallback; and
+- previously verified public programme-guide listings, reused for up to one hour
+  and separated by country, timezone, channel names, and provider aliases.
 
-Guide data and personal playlist additions are held in memory while the
-application is open. Web Library export/import and personal M3U/XMLTV file
+Personal playlist additions and imported guide data are held in memory while the
+application is open. Public guide storage is bounded to four guides of at most
+8 MiB each; no Turnstile token is saved with it. Web Library export/import and personal M3U/XMLTV file
 imports operate on files selected by the visitor and browser-local storage.
 Selected file contents are parsed locally and are not uploaded to Crow-Flix.
 
@@ -44,14 +47,7 @@ retain before clearing site data.
 
 Depending on the feature used, the website can connect to:
 
-- Cloudflare Pages, which serves the website;
-- IPTV-org catalogue and metadata endpoints;
-- timezone-appropriate `i.mjh.nz` programme-guide files for Australian guide
-  requests;
-- bounded public `i.mjh.nz` Australian, New Zealand, and world playlists used
-  to add regional/provider alternatives and genuinely absent channels;
-- the static IPTV Nexus stream-health index, used only as an optional fresh
-  hint for exact IPTV-org source identities;
+- Cloudflare Pages, which serves the website and its prepared catalogue;
 - channel-logo and artwork hosts;
 - media hosts and content-delivery networks listed by the catalogue;
 - external Web Library destinations opened by the visitor;
@@ -64,6 +60,12 @@ Depending on the feature used, the website can connect to:
 
 External providers apply their own availability, geographic, account, storage,
 and privacy rules. Crow-Flix does not bypass those restrictions.
+
+The scheduled catalogue build contacts IPTV-org metadata endpoints, bounded
+public provider playlists, and the static IPTV Nexus stream-health index once
+for the deployment. These build requests contain no visitor data. The relay
+contacts timezone-appropriate `i.mjh.nz` and other public programme-guide files
+when a verified guide request cannot reuse its ten-minute parsed-result cache.
 
 CrowFlix does not probe or preload individual channel streams while a visitor
 browses the catalogue, Guide, favourites, or Free Collection. Media and
@@ -89,8 +91,8 @@ page session and are not uploaded or added to browser storage.
 
 ## Crow-Flix relay
 
-The relay receives requests needed to provide programme guides, load the fixed
-optional FAST fallback playlists, and route browser-incompatible media. Those
+The relay receives requests needed to provide programme guides, import personal
+source URLs, and route browser-incompatible media. Those
 requests can include:
 
 - the visitor IP address and request time;
@@ -116,7 +118,7 @@ upstream downloads and XML parsing.
 
 Cloudflare processes browser and network security signals needed to distinguish
 automated traffic. Crow-Flix sends the resulting one-time token to the relay,
-which validates it with Cloudflare before loading guide data. Tokens expire
+which validates it with Cloudflare before reading cached or fresh guide data. Tokens expire
 after five minutes and are accepted only once.
 
 Crow-Flix does not attach search text, favourites, recent channels, Web Library

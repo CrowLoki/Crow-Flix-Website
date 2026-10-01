@@ -101,7 +101,7 @@ const app = await readFile(path.join(repositoryRoot, "src", "App.tsx"), "utf8");
 for (const value of ["Watch live", "loadWebCatalog", "toWebPlayableSources", "availabilitySummary.ready", "<video", "Next route", "Playback sources", "playback.selectSource", "playback.selectSubtitle", "playback.selectQuality", "Playback settings", "player-mini-guide", "CrowFlix Free", "Australia, United States & English first", "Australia / US / English first", 'import("./personalSources")', "relayFetchText", "guidePageCount", "channels total", "Source providers", "Channel details", "Broadcast areas", "Provider headers", "external streaming protocol", "Channel website", "A–Z", "complete matching catalogue stays visible"]) {
   assert(app.includes(value), `The browser player source is missing: ${value}`);
 }
-for (const value of ["HoverPreview", "CrowGuide", "answerCrowGuide", "Ask Baby CrowBot", "Something else", "No external AI", "explore-popout", "CROWFLIX_HISTORY_KEY", "popstate", "AccountSettingsDialog", "Browsing anonymously", "Account sync is not available yet", 'aria-label="CrowFlix home"']) {
+for (const value of ["CrowGuide", "answerCrowGuide", "Ask Baby CrowBot", "Something else", "No external AI", "explore-popout", "CROWFLIX_HISTORY_KEY", "popstate", "AccountSettingsDialog", "Browsing anonymously", "Account sync is not available yet", 'aria-label="CrowFlix home"']) {
   assert(app.includes(value), `Requested CrowFlix interaction is missing: ${value}`);
 }
 
@@ -121,8 +121,8 @@ for (const value of ["AccountSyncAdapter", "expectedRevision", "mergeAccountFavo
 const appCss = await readFile(path.join(repositoryRoot, "src", "App.css"), "utf8");
 assert(appCss.includes('/cursors/40/normal.png'), "CrowFlix does not use the requested enlarged claw cursor artwork");
 assert(!appCss.includes('/cursors/normal.cur'), "CrowFlix still references the oversized cursor file");
-for (const value of ["if (!playing || isDesktop", "browserPreflightRoutes(", "PLAYING_CHANNEL_PREFLIGHT_SOURCE_LIMIT", "findReadyRoute(", "preflightSource(", "recordSourcePreflight("]) {
-  assert(app.includes(value), `Selected-channel readiness acceleration is missing: ${value}`);
+for (const value of ["HoverPreview", "browserPreflightRoutes(", "findReadyRoute(", "preflightSource("]) {
+  assert(!app.includes(value), `The browser app still starts duplicate or automatic video requests: ${value}`);
 }
 for (const value of ["livePageKeys", "boundedPreflightKeys(", "LIVE_PAGE_PREFLIGHT_CHANNEL_LIMIT"]) {
   assert(!app.includes(value), `The browser app still probes channel sources before the viewer selects one: ${value}`);
@@ -161,7 +161,7 @@ for (const value of ["streamGuidesJson", "32 * 1024 * 1024", "australianGuideSou
 }
 
 const webCatalog = await readFile(path.join(repositoryRoot, "src", "webCatalog.ts"), "utf8");
-for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "AdvocateBroadcastingNetwork.ng", "viewmedia7219.bozztv.com", "overlayAmagiFastFallbacks", "overlayVerifiedPublicFallbacks", "loadStreamHealthIndex", "applyStreamHealthHints", "loadAdditivePlaylists", "overlayAdditivePlaylists", "normalizeStreamUrl", "EXTERNAL_PLAYER_PROTOCOLS", "provenances", "Known-dead deployment", "CrowFlix verified Amagi replacement", "Referer is a request-header value", "regional/provider playlists", "verified public fallbacks", "recent source health", "current FAST fallbacks", "crowflix-catalog-v8", "epgAliases", "mjh-seven-", "ownerCounts", "networkCounts", "feedCounts", "providerCounts", 'fetchJson<ApiSubdivision[]>("subdivisions")', 'fetchJson<ApiCity[]>("cities")', 'fetchJson<ApiTimezone[]>("timezones")']) {
+for (const value of ["OPTIONAL_FAST_PLAYLISTS", "VERIFIED_PUBLIC_FALLBACKS", "AdvocateBroadcastingNetwork.ng", "viewmedia7219.bozztv.com", "overlayAmagiFastFallbacks", "overlayVerifiedPublicFallbacks", "applyStreamHealthHints", "overlayAdditivePlaylists", "normalizeStreamUrl", "EXTERNAL_PLAYER_PROTOCOLS", "provenances", "Known-dead deployment", "CrowFlix verified Amagi replacement", "Referer is a request-header value", "regional/provider playlists", "verified public fallbacks", "current FAST fallbacks", "loadPreparedCatalog", "epgAliases", "mjh-seven-", "ownerCounts", "networkCounts", "feedCounts", "providerCounts"]) {
   assert(webCatalog.includes(value), `Catalogue fallback repair is missing: ${value}`);
 }
 
