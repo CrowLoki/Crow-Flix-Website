@@ -120,6 +120,24 @@ describe("PlaybackRun retry", () => {
     hlsState.instances.length = 0;
   });
 
+  it("explains an unavailable source without sending website visitors to a desktop app", () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const updates: PlaybackControllerState[] = [];
+    const video = {
+      load: vi.fn(), pause: vi.fn(), removeAttribute: vi.fn(),
+    } as unknown as HTMLVideoElement;
+    const run = new PlaybackRun({ key: "empty", name: "Unavailable", sources: [] }, video,
+      (state) => updates.push(state));
+
+    run.start();
+
+    const failure = updates[updates.length - 1];
+    expect(failure?.status).toBe("failed");
+    expect(failure?.message).toContain("Refresh the catalogue");
+    expect(failure?.message).not.toMatch(/desktop|preview/i);
+    run.dispose();
+  });
+
   it("rebuilds ordering and restarts at the fresh source zero after exhaustion", async () => {
     const storage = memoryStorage();
     vi.stubGlobal("localStorage", storage);

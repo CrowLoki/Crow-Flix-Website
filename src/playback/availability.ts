@@ -35,20 +35,6 @@ function isPartTime(source: StreamSource): boolean {
     .test(source.label?.trim() || "");
 }
 
-function sourceHealthStates(
-  source: StreamSource,
-  health: Record<string, SourceHealth>,
-): SourceHealth[] {
-  const base = sourceIdentifier(source);
-  const states = [
-    health[base],
-    health[`${base}:direct`],
-    health[`${base}:relay`],
-    health[`${base}:https-upgrade`],
-  ].filter((state): state is SourceHealth => Boolean(state));
-  return states;
-}
-
 function expectedBrowserRouteKeys(source: StreamSource): string[] {
   const base = sourceIdentifier(source);
   if (source.delivery) return [base];
@@ -59,6 +45,53 @@ function expectedBrowserRouteKeys(source: StreamSource): string[] {
   return source.url.toLowerCase().startsWith("http://")
     ? [`${base}:relay`, `${base}:https-upgrade`]
     : [`${base}:direct`, `${base}:relay`];
+}
+
+function hasCurrentPlaybackSuccess(
+  state: SourceHealth | undefined,
+  now: number,
+  preflights: Array<SourcePreflight | undefined>,
+): boolean {
+  const success = state?.lastSuccessAt ?? 0;
+  // Recording success resets both fields; any remaining failure supersedes the
+  // retained success timestamp, even after its retry cooldown has expired.
+  return Boolean(
+    state
+    && state.failures === 0
+    && state.cooldownUntil === 0
+    && Number.isFinite(success)
+    && success > 0
+    && success <= now
+    && now - success <= VERIFIED_AVAILABILITY_TTL_MS
+    // Expiring a negative preflight must not resurrect older playback evidence.
+    && !preflights.some((result) => result?.status === "offline"
+      && Number.isFinite(result.checkedAt)
+      && result.checkedAt >= success
+      && result.checkedAt <= now),
+  );
+}
+
+function sourceHasVerifiedRoute(
+  source: StreamSource,
+  health: Record<string, SourceHealth>,
+  now: number,
+  preflights: Record<string, SourcePreflight>,
+): boolean {
+  const routeKeys = expectedBrowserRouteKeys(source);
+  if (routeKeys.some((key) => hasCurrentPlaybackSuccess(health[key], now, [preflights[key]]))) {
+    return true;
+  }
+
+  // Older snapshots used an unsuffixed source ID. Keep clean legacy successes
+  // usable only until route-specific playback evidence exists: the legacy
+  // record cannot identify a working alternate route after a routed failure.
+  if (source.delivery || routeKeys.some((key) => health[key])) return false;
+  const base = sourceIdentifier(source);
+  return hasCurrentPlaybackSuccess(
+    health[base],
+    now,
+    [base, ...routeKeys].map((key) => preflights[key]),
+  );
 }
 
 function catalogSaysOffline(source: StreamSource, now: number): boolean {
@@ -73,12 +106,7 @@ export function channelAvailability(
   now = Date.now(),
   preflights: Record<string, SourcePreflight> = {},
 ): ChannelAvailability {
-  if (channel.sources.some((source) => {
-    return sourceHealthStates(source, health).some((state) => {
-      const success = state.lastSuccessAt || 0;
-      return success > 0 && now - success <= VERIFIED_AVAILABILITY_TTL_MS;
-    });
-  })) {
+  if (channel.sources.some((source) => sourceHasVerifiedRoute(source, health, now, preflights))) {
     return "verified";
   }
 

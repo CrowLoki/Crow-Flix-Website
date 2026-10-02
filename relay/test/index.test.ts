@@ -255,6 +255,65 @@ describe("worker input validation (no network is touched)", () => {
 });
 
 describe("stream relay transport", () => {
+  it("exposes its validated final DASH URL and overwrites upstream-spoofed metadata", async () => {
+    const startUrl = "https://provider.example/channel.mpd";
+    const finalUrl = "https://cdn.example/live/path/manifest.mpd?ticket=fixture";
+    const manifest = '<MPD><Period><AdaptationSet><SegmentTemplate media="video/segment-$Number$.m4s" /></AdaptationSet></Period></MPD>';
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const href = input instanceof Request ? input.url : input.toString();
+      expect(init?.redirect).toBe("manual");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("User-Agent")).toBe("Provider UA");
+      expect(headers.get("Referer")).toBe("https://provider.example/watch");
+      if (href === startUrl) {
+        return new Response(null, { status: 302, headers: { Location: finalUrl } });
+      }
+      expect(href).toBe(finalUrl);
+      return new Response(manifest, {
+        headers: {
+          "Content-Type": "application/dash+xml",
+          "X-CrowFlix-Upstream-Url": "http://127.0.0.1/spoofed.mpd",
+          "Set-Cookie": "provider-session=fixture",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const parameters = new URLSearchParams({
+      url: startUrl,
+      ua: "Provider UA",
+      referer: "https://provider.example/watch",
+    });
+
+    const response = await call(`/stream?${parameters}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-CrowFlix-Upstream-Url")).toBe(finalUrl);
+    expect(response.headers.get("Access-Control-Expose-Headers")?.split(",").map((name) => name.trim().toLowerCase()))
+      .toContain("x-crowflix-upstream-url");
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+    expect(response.headers.get("User-Agent")).toBeNull();
+    expect(response.headers.get("Referer")).toBeNull();
+    expect(await response.text()).toBe(manifest);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["http://127.0.0.1/manifest.mpd", "https://user:password@cdn.example/manifest.mpd"])(
+    "rejects an unsafe DASH redirect before fetching or exposing its URL: %s",
+    async (location) => {
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, {
+        status: 302,
+        headers: { Location: location, "X-CrowFlix-Upstream-Url": location },
+      }));
+      vi.stubGlobal("fetch", fetcher);
+
+      const response = await call(`/stream?url=${encodeURIComponent("https://provider.example/channel.mpd")}`);
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get("X-CrowFlix-Upstream-Url")).toBeNull();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it.each([401, 403, 404, 410, 429, 451, 503])(
     "preserves an upstream HTTP %i so the player can explain the failure",
     async (status) => {

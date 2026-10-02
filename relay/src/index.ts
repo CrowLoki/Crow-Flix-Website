@@ -34,7 +34,7 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "*",
   "Access-Control-Expose-Headers":
-    "Content-Length, Content-Range, Accept-Ranges, X-CrowFlix-Guide-Cache",
+    "Content-Length, Content-Range, Accept-Ranges, X-CrowFlix-Guide-Cache, X-CrowFlix-Upstream-Url",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -411,7 +411,7 @@ function streamAfterPrefix(
   });
 }
 
-function mediaResponseHeaders(upstream: Response): Headers {
+function mediaResponseHeaders(upstream: Response, finalUrl: URL): Headers {
   const headers = new Headers(CORS_HEADERS);
   for (const name of [
     "content-type",
@@ -423,6 +423,9 @@ function mediaResponseHeaders(upstream: Response): Headers {
     const value = upstream.headers.get(name);
     if (value !== null) headers.set(name, value);
   }
+  // Use only our manually validated redirect result, never upstream metadata.
+  // DASH needs this base because the browser's Response.url is the relay URL.
+  headers.set("X-CrowFlix-Upstream-Url", finalUrl.href);
   return headers;
 }
 
@@ -487,7 +490,7 @@ async function handleStream(
     clearDeadline();
     return new Response(null, {
       status: upstream.status,
-      headers: mediaResponseHeaders(upstream),
+      headers: mediaResponseHeaders(upstream, finalUrl),
     });
   }
 
@@ -524,7 +527,7 @@ async function handleStream(
   // the same reader. There is no overall playback timeout.
   return new Response(streamAfterPrefix(reader, prefix), {
     status: upstream.status,
-    headers: mediaResponseHeaders(upstream),
+    headers: mediaResponseHeaders(upstream, finalUrl),
   });
 }
 

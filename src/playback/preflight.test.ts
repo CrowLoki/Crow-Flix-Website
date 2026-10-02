@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   browserPreflightRoutes,
   firstDashResourceUrl,
@@ -13,6 +13,10 @@ import {
   SOURCE_PREFLIGHT_TTL_MS,
 } from "./preflight";
 import { sourceIdentifier, type StreamSource } from "./types";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const source = (url = "https://provider.test/live.m3u8"): StreamSource => ({
   id: `source-${url}`,
@@ -99,6 +103,55 @@ describe("source readiness preflight", () => {
 });
 
 describe("source readiness cache", () => {
+  function denyBrowserStorage() {
+    vi.stubGlobal("localStorage", undefined);
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      get: () => { throw new Error("Storage access denied"); },
+    });
+  }
+
+  it("returns an empty cache when the default storage getter is denied", () => {
+    denyBrowserStorage();
+
+    expect(readSourcePreflights()).toEqual({});
+  });
+
+  it("keeps recording optional when the default storage getter is denied", () => {
+    denyBrowserStorage();
+
+    expect(() => recordSourcePreflight(source(), {
+      status: "ready", checkedAt: 100_000, transport: "hls",
+    })).not.toThrow();
+  });
+
+  it("contains failures from injected storage methods", () => {
+    const storage = {
+      getItem: () => { throw new Error("Read failed"); },
+      setItem: () => { throw new Error("Quota exceeded"); },
+    };
+
+    expect(readSourcePreflights(storage)).toEqual({});
+    expect(() => recordSourcePreflight(source(), {
+      status: "ready", checkedAt: 100_000, transport: "hls",
+    }, storage)).not.toThrow();
+  });
+
+  it("reads and records through the default browser storage", () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    });
+    const route = source();
+    const result = { status: "ready", checkedAt: 100_000, transport: "hls" } as const;
+
+    recordSourcePreflight(route, result);
+
+    expect(readSourcePreflights()).toEqual({ [sourceIdentifier(route)]: result });
+    expect(values.has(SOURCE_PREFLIGHT_STORAGE_KEY)).toBe(true);
+  });
+
   it("validates persisted records and ignores malformed data", () => {
     const storage = {
       getItem: () => JSON.stringify({

@@ -1,3 +1,4 @@
+import { browserStorage } from "../browserStorage";
 import { routeDashRequestUrl, toWebPlayableSources } from "../relayClient";
 import { isFreshCatalogHealth } from "../streamHealthIndex";
 import { classifySource } from "./logic";
@@ -468,7 +469,7 @@ export function isFreshPreflight(
 }
 
 export function readSourcePreflights(
-  storage: Pick<Storage, "getItem"> = localStorage,
+  storage: Pick<Storage, "getItem"> = browserStorage,
 ): Record<string, SourcePreflight> {
   const output: Record<string, SourcePreflight> = Object.create(null) as Record<string, SourcePreflight>;
   let parsed: unknown;
@@ -489,7 +490,7 @@ export function readSourcePreflights(
 export function recordSourcePreflight(
   source: StreamSource,
   result: SourcePreflight,
-  storage: Pick<Storage, "getItem" | "setItem"> = localStorage,
+  storage: Pick<Storage, "getItem" | "setItem"> = browserStorage,
 ): void {
   const id = sourceIdentifier(source);
   const existing = readSourcePreflights(storage);

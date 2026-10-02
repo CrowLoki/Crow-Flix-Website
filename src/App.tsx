@@ -58,6 +58,7 @@ import {
   channelMatchesTimezone,
 } from "./broadcastArea";
 import { mergeChannelsByKey } from "./catalogMerge";
+import { browserStorage, saveBrowserValue } from "./browserStorage";
 import {
   channelMatchesMetadataFilters,
   channelProviders,
@@ -115,7 +116,6 @@ import {
 import { appendZapDigit, resolveZapNumber, zapTarget } from "./zap";
 import { loadWebCatalog } from "./webCatalog";
 import { guideIsFresh, GUIDE_REFRESH_INTERVAL_MS, readSavedGuide, saveGuide } from "./guideBrowserCache";
-import { MAIN_FEED_OPTION_ID } from "./webCatalog";
 import {
   loadRelayGuide,
   relayFetchText,
@@ -270,52 +270,6 @@ declare global {
   interface Window { __TAURI_INTERNALS__?: unknown }
 }
 
-const demoDefinitions = [
-  ["Crow News", "news", "AU"], ["World Report", "news", "UK"], ["Pulse 24", "news", "US"],
-  ["Cinema One", "movies", "AU"], ["Midnight Movies", "movies", "US"], ["Classic Screen", "classic", "UK"],
-  ["Arena Live", "sports", "AU"], ["World Football", "sports", "UK"], ["Velocity", "auto", "DE"],
-  ["Wild Earth", "documentary", "CA"], ["Deep Space", "science", "US"], ["Culture House", "culture", "FR"],
-  ["Neon Sessions", "music", "JP"], ["Stage Live", "entertainment", "US"], ["Family Central", "family", "NZ"],
-  ["Junior Planet", "kids", "AU"], ["World Kitchen", "cooking", "IT"], ["Open Roads", "travel", "NO"],
-] as const;
-
-const demoChannels: Channel[] = Array.from({ length: 72 }, (_, index) => {
-  const [base, category, country] = demoDefinitions[index % demoDefinitions.length];
-  return {
-    key: `preview-${index}`, id: `Preview${index}.${country.toLowerCase()}`, name: index < demoDefinitions.length ? base : `${base} ${Math.floor(index / demoDefinitions.length) + 1}`,
-    logo: null, categories: [category], country, languages: ["English"], broadcastArea: [`c/${country}`], sources: [],
-    feed: null, format: index % 3 === 0 ? "1080p" : "720p", network: "CrowFlix Preview", website: null, provenance: ["CrowFlix Preview"], isMain: true,
-  };
-});
-
-function makeDemoProgrammes(channels: Channel[]): Programme[] {
-  const titles = ["Morning Brief", "Wild Frontiers", "Live at the Arena", "After Dark", "World Kitchen", "Signal Unknown", "The Big Match", "Northern Lights"];
-  const base = new Date();
-  base.setMinutes(0, 0, 0);
-  return channels.flatMap((channel, channelIndex) => Array.from({ length: 7 }, (_, index) => ({
-    channelId: channel.id,
-    title: titles[(channelIndex + index) % titles.length],
-    description: `Live now on ${channel.name}.`,
-    category: titleCase(channel.categories[0]),
-    start: new Date(base.getTime() + (index - 2) * 60 * 60 * 1000).toISOString(),
-    stop: new Date(base.getTime() + (index - 1) * 60 * 60 * 1000).toISOString(),
-  })));
-}
-
-const demoCatalog: Catalog = {
-  channels: demoChannels,
-  categories: [...new Set(demoChannels.flatMap((channel) => channel.categories))].map((id) => ({ id, name: titleCase(id), count: demoChannels.filter((channel) => channel.categories.includes(id)).length })),
-  countries: ["AU", "US", "UK", "CA", "DE", "FR", "JP", "NZ", "IT", "NO"].map((code) => ({ code, name: countryName(code), flag: "", languages: ["eng"], count: demoChannels.filter((channel) => channel.country === code).length })),
-  languages: [{ id: "English", name: "English", count: demoChannels.length }],
-  regions: [{ code: "WORLD", name: "Worldwide", countries: ["AU", "US", "UK", "CA", "DE", "FR", "JP", "NZ", "IT", "NO"], count: demoChannels.length }],
-  subdivisions: [], cities: [], timezones: [],
-  owners: [],
-  networks: [{ id: "CrowFlix Preview", name: "CrowFlix Preview", count: demoChannels.length }],
-  feeds: [{ id: MAIN_FEED_OPTION_ID, name: "Main feed", count: demoChannels.length }],
-  providers: [{ id: "CrowFlix Preview", name: "CrowFlix Preview", count: demoChannels.length }],
-  updatedAt: new Date().toISOString(), source: "CrowFlix browser preview",
-};
-
 const emptyCatalog: Catalog = {
   channels: [],
   categories: [],
@@ -428,7 +382,7 @@ function channelQuality(channel: Channel): string {
 }
 
 function stored<T>(key: string, fallback: T): T {
-  try { const value = localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; }
+  try { const value = browserStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; }
   catch { return fallback; }
 }
 
@@ -475,10 +429,10 @@ function useModalFocusTrap(
 export default function App() {
   const isDesktop = Boolean(window.__TAURI_INTERNALS__);
   const [initialWebLibrary] = useState(() =>
-    loadWebDestinations(localStorage)
+    loadWebDestinations(browserStorage)
   );
   const [initialAccountPreference] = useState(() =>
-    loadAccountPromptPreference(localStorage)
+    loadAccountPromptPreference(browserStorage)
   );
   const [view, setView] = useState<View>("home");
   const [catalog, setCatalog] = useState<Catalog>(emptyCatalog);
@@ -528,6 +482,9 @@ export default function App() {
   const guideContexts = useRef(new Map<string, string>());
   const guideRequestGeneration = useRef(0);
   const personalGuide = useRef<GuideResult | null>(null);
+  // Personal sources belong to this viewing session, independently of each
+  // refreshed public snapshot. Keep their original routes for additive merges.
+  const personalChannels = useRef<Channel[]>([]);
   const skipInitialWebSave = useRef(true);
   const previousChannelKey = useRef<string | null>(null);
   const zapBuffer = useRef("");
@@ -671,8 +628,8 @@ export default function App() {
   }, []);
   const updateAccountPromptSuppression = useCallback((suppressed: boolean) => {
     const error = suppressed
-      ? saveAccountPromptPreference(localStorage, true)
-      : clearAccountPromptPreference(localStorage);
+      ? saveAccountPromptPreference(browserStorage, true)
+      : clearAccountPromptPreference(browserStorage);
     if (error) {
       showToast(error);
       return;
@@ -687,9 +644,19 @@ export default function App() {
     setLoading(true);
     setLoadingMessage(force ? "Refreshing the worldwide catalogue…" : "Loading channels, feeds, logos and regions…");
     try {
-      const result = isDesktop
+      let result = isDesktop
         ? await invoke<Catalog>("load_catalog", { force })
         : await loadWebCatalog(force);
+      if (personalChannels.current.length) {
+        if (isDesktop) {
+          result = { ...result, channels: mergeChannelsByKey(result.channels, personalChannels.current), source: `${result.source} + personal playlist` };
+        } else {
+          const personal = await import("./personalSources");
+          // Read the ref after the await so imports completed during a refresh
+          // are included, including alternate routes for existing channels.
+          result = personal.mergePersonalPlaylistIntoCatalog(result, personalChannels.current);
+        }
+      }
       setCatalog(result);
       setCatalogError(null);
       setGuideCountry((current) => {
@@ -703,16 +670,6 @@ export default function App() {
       });
       if (force) showToast(`${result.channels.length.toLocaleString()} channels ready · ${result.source}`);
     } catch (error) {
-      if (!isDesktop) {
-        // The web build has no demo pretence: show the labelled preview set
-        // only when the real catalogue cannot be reached at all.
-        setCatalog(demoCatalog);
-        setProgrammes(makeDemoProgrammes(demoChannels));
-        setGuideStatus("CrowFlix preview guide · live now and up next");
-        setCatalogError(null);
-        showToast("Live catalogue unreachable — showing the CrowFlix preview set");
-        return;
-      }
       const message = errorMessage(error);
       setCatalogError(message);
       showToast(message);
@@ -720,14 +677,14 @@ export default function App() {
   }, [isDesktop, showToast]);
 
   useEffect(() => { void loadCatalog(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { localStorage.setItem("crowflix:favourites", JSON.stringify(favourites)); }, [favourites]);
-  useEffect(() => { localStorage.setItem("crowflix:recent", JSON.stringify(recent)); }, [recent]);
+  useEffect(() => { saveBrowserValue("crowflix:favourites", favourites); }, [favourites]);
+  useEffect(() => { saveBrowserValue("crowflix:recent", recent); }, [recent]);
   useEffect(() => {
     if (skipInitialWebSave.current) {
       skipInitialWebSave.current = false;
       if (!initialWebLibrary.migrated) return;
     }
-    const error = saveWebDestinations(localStorage, webDestinations);
+    const error = saveWebDestinations(browserStorage, webDestinations);
     if (error) showToast(`Web Library could not be saved: ${error}`);
   }, [showToast, webDestinations]);
   useEffect(() => {
@@ -825,15 +782,6 @@ export default function App() {
       return;
     }
     if (!isDesktop) {
-      if (catalog.source.includes("preview")) {
-        const result: GuideResult = { programmes: makeDemoProgrammes(countryChannels), source: "CrowFlix preview guide", matchedChannels: countryChannels.length, updatedAt: new Date().toISOString() };
-        setGuideNeedsVerification(false);
-        setGuideVerificationError(null);
-        guideCache.current.set(targetCountry, result);
-        guideContexts.current.set(targetCountry, guideContext);
-        applyGuideResult(result);
-        return;
-      }
       if (!turnstileToken) {
         setGuideNeedsVerification(true);
         setGuideVerificationError(null);
@@ -957,6 +905,7 @@ export default function App() {
     try {
       if (isDesktop) {
         const custom = await invoke<Channel[]>("load_playlist", { source: sourceUrl.trim() });
+        personalChannels.current = mergeChannelsByKey(personalChannels.current, custom);
         setCatalog((current) => ({ ...current, channels: mergeChannelsByKey(current.channels, custom), source: `${current.source} + custom playlist` }));
         showToast(`${custom.length.toLocaleString()} personal channels added`);
       } else {
@@ -964,6 +913,7 @@ export default function App() {
         const source = personal.normalizePersonalSourceUrl(sourceUrl.trim());
         const content = await relayFetchText(source, MAX_PLAYLIST_IMPORT_BYTES);
         const custom = personal.parsePersonalPlaylist(content, new URL(source).hostname);
+        personalChannels.current = mergeChannelsByKey(personalChannels.current, custom);
         setCatalog((current) => personal.mergePersonalPlaylistIntoCatalog(current, custom));
         showToast(`${custom.length.toLocaleString()} personal channels added`);
       }
@@ -986,11 +936,13 @@ export default function App() {
       const content = await file.text();
       if (isDesktop) {
         const custom = await invoke<Channel[]>("parse_playlist_text", { text: content });
+        personalChannels.current = mergeChannelsByKey(personalChannels.current, custom);
         setCatalog((current) => ({ ...current, channels: mergeChannelsByKey(current.channels, custom), source: `${current.source} + ${file.name}` }));
         showToast(`${custom.length.toLocaleString()} personal channels added`);
       } else {
         const personal = await import("./personalSources");
         const custom = personal.parsePersonalPlaylist(content, file.name);
+        personalChannels.current = mergeChannelsByKey(personalChannels.current, custom);
         setCatalog((current) => personal.mergePersonalPlaylistIntoCatalog(current, custom));
         showToast(`${custom.length.toLocaleString()} personal channels added`);
       }
@@ -1021,7 +973,9 @@ export default function App() {
       setEpgUrl("");
       setSourceOpen(false);
       setView("guide");
-      showToast(`Personal guide loaded · ${result.matchedChannels.toLocaleString()} channels matched`);
+      showToast(result.matchedChannels
+        ? `Personal guide loaded · ${result.matchedChannels.toLocaleString()} channels matched`
+        : "Personal guide imported, but no current listings match this catalogue");
     } catch (error) { showToast(error instanceof Error ? error.message : String(error)); }
     finally { setGuideLoading(false); }
   };
@@ -1048,7 +1002,9 @@ export default function App() {
       applyGuideResult(result);
       setSourceOpen(false);
       setView("guide");
-      showToast(`Personal guide loaded · ${result.matchedChannels.toLocaleString()} channels matched`);
+      showToast(result.matchedChannels
+        ? `Personal guide loaded · ${result.matchedChannels.toLocaleString()} channels matched`
+        : "Personal guide imported, but no current listings match this catalogue");
     } catch (error) { showToast(error instanceof Error ? error.message : String(error)); }
     finally { setGuideLoading(false); }
   };

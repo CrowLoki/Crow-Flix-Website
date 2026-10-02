@@ -328,10 +328,10 @@ export function loadWebDestinations(
   storage: Pick<Storage, "getItem">,
   fallback: readonly WebDestination[] = DEFAULT_WEB_DESTINATIONS,
 ): WebDestinationLoadResult {
-  const raw = storage.getItem(WEB_DESTINATION_STORAGE_KEY);
-  if (raw === null) return { items: [...fallback] };
-
   try {
+    const raw = storage.getItem(WEB_DESTINATION_STORAGE_KEY);
+    if (raw === null) return { items: [...fallback] };
+
     const parsed = parseWebDestinationDocument(raw);
     if (parsed.version === 1) {
       return {
