@@ -5,6 +5,7 @@
 // The relay never bypasses provider geographic or account restrictions.
 
 import { sourceIdentifier, type StreamSource } from "./playback/types";
+import { readBoundedResponse, ResponseSizeLimitError } from "./playback/boundedResponse";
 
 export const RELAY_BASE = (
   (import.meta.env.VITE_RELAY_BASE as string | undefined)?.trim()
@@ -272,31 +273,23 @@ export async function relayFetchText(
       } catch { /* keep the status message */ }
       throw new Error(message);
     }
-    const declared = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declared) && declared > limit) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`That source exceeds the ${(limit / 1024 / 1024).toLocaleString()} MiB browser import limit.`);
-    }
     if (!response.body) throw new Error("The source returned no readable content.");
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let total = 0;
-    let output = "";
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        total += value.byteLength;
-        if (total > limit) {
-          await reader.cancel().catch(() => undefined);
-          throw new Error(`That source exceeds the ${(limit / 1024 / 1024).toLocaleString()} MiB browser import limit.`);
-        }
-        output += decoder.decode(value, { stream: true });
+      const received = await readBoundedResponse(response, limit, "That source");
+      const prefix = new Uint8Array(received, 0, Math.min(2, received.byteLength));
+      // Fetch already decodes HTTP Content-Encoding. Only decompress remaining
+      // gzip file bytes, including .xml.gz served without Content-Encoding.
+      const bytes = prefix[0] === 0x1f && prefix[1] === 0x8b
+        ? await readBoundedResponse(new Response(
+          new Blob([received]).stream().pipeThrough(new DecompressionStream("gzip")),
+        ), limit, "That expanded source")
+        : received;
+      return new TextDecoder().decode(bytes);
+    } catch (error) {
+      if (error instanceof ResponseSizeLimitError) {
+        throw new Error(`That source exceeds the ${(limit / 1024 / 1024).toLocaleString()} MiB browser import limit.`);
       }
-      output += decoder.decode();
-      return output;
-    } finally {
-      reader.releaseLock();
+      throw error;
     }
   } finally {
     clearTimeout(timer);

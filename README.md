@@ -12,6 +12,9 @@ Catalogue data is prepared once per daily Pages build and served as one static
 gzip snapshot for the visitor's Australian region. It is reused in browser
 storage for 24 hours; Refresh catalogue reloads the published snapshot. Visitors
 do not download the upstream metadata or invoke the Worker to build a catalogue.
+Refreshing preserves personal playlists imported during the current session,
+including alternate routes for existing channels. A failed refresh keeps the
+loaded catalogue; a first-load failure shows an error and retry action.
 See [`docs/OPERATING-USAGE.md`](docs/OPERATING-USAGE.md) for the refresh schedule,
 cache lifetimes, and measured request reductions.
 
@@ -69,6 +72,13 @@ loads the deployed `crowflix.tv` application in an isolated, invisible browser
 profile; verifies the live catalogue, complete 48-card page, metadata/details,
 and personal-source dialog; closes the browser; and removes only that generated
 temporary profile. It never opens or reuses a visible browser tab.
+
+After building, run `npm run preview -- --host 127.0.0.1 --port 4189` and, in
+another terminal, `npm run acceptance:regressions`. These isolated browser tests
+exercise denied/full storage, catalogue failure and recovery, and file/URL
+playlist preservation across refreshes, including concurrent imports. They use
+small local fixtures and block external requests; they do not contact providers
+or the relay. A different local preview URL can be passed after `--`.
 
 For local browser development:
 

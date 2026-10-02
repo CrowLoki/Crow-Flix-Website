@@ -2,6 +2,7 @@ import type { MediaPlayerClass } from "dashjs";
 import type { RequestInterceptor } from "@svta/cml-request";
 import {
   logicalDashRequestUrl,
+  RELAY_BASE,
   routeDashRequestUrl,
 } from "../relayClient";
 import {
@@ -50,6 +51,42 @@ type DashXhrLoaderInstance = {
 type DashLoaderFactory = (() => DashXhrLoaderInstance) & {
   __dashjs_factory_name?: string;
 };
+
+function dashResponseUrl(
+  response: Response,
+  requestUrl: string,
+  fetchUrl: string,
+  source: StreamSource,
+): string {
+  if (source.delivery !== "relay") return response.url || requestUrl;
+  const fallback = logicalDashRequestUrl(requestUrl, source);
+  const finalUrl = response.headers.get("X-CrowFlix-Upstream-Url");
+  if (!finalUrl || finalUrl.length > 8_192 || /[\u0000-\u0020\u007f]/.test(finalUrl)) {
+    return fallback;
+  }
+  try {
+    const relay = new URL(RELAY_BASE);
+    const requested = new URL(fetchUrl);
+    // The Worker owns this header. A direct provider or a response redirected
+    // away from our relay must never be able to supply relay metadata.
+    if (
+      requested.origin !== relay.origin
+      || requested.pathname !== "/stream"
+      || !requested.searchParams.has("url")
+      || new URL(response.url).href !== requested.href
+    ) return fallback;
+    const parsed = new URL(finalUrl);
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      || parsed.username || parsed.password
+    ) return fallback;
+    // Public-network and redirect checks are enforced by the Worker before
+    // this URL is exposed and again for each resulting relayed segment.
+    return parsed.href;
+  } catch {
+    return fallback;
+  }
+}
 
 /**
  * dash.js routes ordinary manifests, initialization data and media segments
@@ -127,12 +164,9 @@ export function installNativeDashTransport(
           const { data, byteLength } = await dashResponseData(response, request.responseType);
           const active = takeActiveRequest(request);
           if (!active) return;
-          // A relayed Response URL points at `/stream`. Keep dash.js on the
-          // provider-facing URL so relative MPD/BaseURL references resolve
-          // correctly; every resulting request is wrapped above.
-          target.url = source.delivery === "relay"
-            ? logicalDashRequestUrl(request.url, source)
-            : response.url || request.url;
+          // A relayed Response URL points at `/stream`; the Worker supplies
+          // its validated final upstream URL for relative MPD references.
+          target.url = dashResponseUrl(response, request.url, fetchUrl, source);
           target.status = response.status;
           target.statusText = response.statusText;
           target.headers = Object.fromEntries(response.headers.entries());

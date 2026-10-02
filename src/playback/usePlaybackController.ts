@@ -246,7 +246,7 @@ export class PlaybackRun {
       this.update({
         ...IDLE_STATE,
         status: "failed",
-        message: "This preview card has no live source. Open CrowFlix on the desktop to load the live catalogue.",
+        message: "This channel has no playable source. Refresh the catalogue, choose another channel, or add a personal playlist.",
       });
       return;
     }

@@ -13,6 +13,7 @@ type CapturedLoader = {
       method: string;
       url: string;
       responseType?: XMLHttpRequestResponseType;
+      headers?: Record<string, string>;
       customData?: {
         abort?: () => void;
         onabort?: () => void;
@@ -24,7 +25,141 @@ type CapturedLoader = {
   abort: () => void;
 };
 
+function captureTransport(source: StreamSource, fetcher: MediaFetcher) {
+  let loaderFactory: (() => CapturedLoader) | undefined;
+  let requestInterceptor: RequestInterceptor | undefined;
+  const player = {
+    extend: (_name: string, extension: () => CapturedLoader) => {
+      loaderFactory = extension;
+    },
+    addRequestInterceptor: (interceptor: RequestInterceptor) => {
+      requestInterceptor = interceptor;
+    },
+  } as unknown as MediaPlayerClass;
+  installNativeDashTransport(player, source, fetcher);
+  return { loader: loaderFactory!(), requestInterceptor };
+}
+
+function responseAt(url: string, body: string, headers?: HeadersInit): Response {
+  const response = new Response(body, { headers });
+  Object.defineProperty(response, "url", { value: url });
+  return response;
+}
+
 describe("native DASH transport", () => {
+  it.each(["logical", "intercepted"])(
+    "resolves a redirected relayed MPD's relative segments from the final URL (%s request)",
+    async (requestForm) => {
+      const originalUrl = "https://provider.test/start/channel.mpd";
+      const finalUrl = "https://cdn.test/live/path/manifest.mpd?ticket=fixture";
+      const manifest = '<MPD><Period><AdaptationSet><SegmentTemplate media="video/segment-$Number$.m4s" /></AdaptationSet></Period></MPD>';
+      const [source] = toWebPlayableSources({
+        id: "redirected-dash",
+        url: originalUrl,
+        transport: "dash",
+        userAgent: "Provider UA",
+        referrer: "https://provider.test/watch",
+      });
+      const fetcher: MediaFetcher = vi.fn(async (url) => {
+        const upstream = new URL(url).searchParams.get("url")!;
+        return responseAt(url, upstream === originalUrl ? manifest : "segment bytes", {
+          "X-CrowFlix-Upstream-Url": upstream === originalUrl ? finalUrl : upstream,
+        });
+      });
+      const { loader, requestInterceptor } = captureTransport(source!, fetcher);
+      const target: Record<string, unknown> = {};
+      const onloadend = vi.fn();
+      loader.load({
+        method: "GET",
+        url: requestForm === "logical" ? originalUrl : source!.url,
+        responseType: "text",
+        customData: { onloadend },
+      }, target);
+
+      await vi.waitFor(() => expect(onloadend).toHaveBeenCalledOnce());
+      expect(target.url).toBe(finalUrl);
+      expect(target.data).toBe(manifest);
+      const media = /media="([^"]+)"/.exec(String(target.data))![1].replace("$Number$", "1");
+      const segmentUrl = new URL(media, String(target.url)).href;
+      expect(segmentUrl).toBe("https://cdn.test/live/path/video/segment-1.m4s");
+      const intercepted = await requestInterceptor!({ url: segmentUrl, responseType: "arrayBuffer" });
+      const routed = new URL(intercepted.url);
+      expect(routed.searchParams.get("url")).toBe(segmentUrl);
+      expect(routed.searchParams.get("ua")).toBe("Provider UA");
+      expect(routed.searchParams.get("referer")).toBe("https://provider.test/watch");
+
+      const segmentLoaded = vi.fn();
+      loader.load({
+        method: "GET",
+        url: intercepted.url,
+        responseType: "arraybuffer",
+        headers: { Range: "bytes=0-4095" },
+        customData: { onloadend: segmentLoaded },
+      }, {});
+      await vi.waitFor(() => expect(segmentLoaded).toHaveBeenCalledOnce());
+      expect(fetcher).toHaveBeenLastCalledWith(intercepted.url, source, expect.objectContaining({
+        headers: expect.any(Headers),
+      }));
+      expect(new Headers(vi.mocked(fetcher).mock.calls[1][2]?.headers).get("Range")).toBe("bytes=0-4095");
+    },
+  );
+
+  it("uses the actual direct redirect URL and ignores upstream-spoofed relay metadata", async () => {
+    const originalUrl = "https://provider.test/channel.mpd";
+    const finalUrl = "https://cdn.test/direct/manifest.mpd";
+    const [source] = toWebPlayableSources({ id: "direct-dash", url: originalUrl, transport: "dash" });
+    const fetcher: MediaFetcher = vi.fn(async () => responseAt(finalUrl, "<MPD />", {
+      "X-CrowFlix-Upstream-Url": "https://spoofed.test/manifest.mpd",
+    }));
+    const { loader, requestInterceptor } = captureTransport(source!, fetcher);
+    const target: Record<string, unknown> = {};
+    const onloadend = vi.fn();
+    loader.load({ method: "GET", url: originalUrl, customData: { onloadend } }, target);
+
+    await vi.waitFor(() => expect(onloadend).toHaveBeenCalledOnce());
+    expect(requestInterceptor).toBeUndefined();
+    expect(target.url).toBe(finalUrl);
+    expect(new URL("video/1.m4s", String(target.url)).href).toBe("https://cdn.test/direct/video/1.m4s");
+    expect(fetcher).toHaveBeenCalledWith(originalUrl, source, expect.any(Object));
+  });
+
+  it.each([
+    ["relative URL", "/relative/manifest.mpd"],
+    ["script URL", "javascript:alert(1)"],
+    ["file URL", "file:///private/manifest.mpd"],
+    ["embedded credentials", "https://user:password@cdn.test/manifest.mpd"],
+    ["control characters", "https://cdn.test/mani\tfest.mpd"],
+    ["oversized URL", `https://cdn.test/${"x".repeat(8_192)}`],
+  ])("ignores malformed or unsafe relay URL metadata: %s", async (_label, metadata) => {
+    const originalUrl = "https://provider.test/channel.mpd";
+    const [source] = toWebPlayableSources({ id: "relay-dash", url: originalUrl, userAgent: "Provider UA" });
+    const fetcher: MediaFetcher = vi.fn(async (url) => responseAt(url, "<MPD />", {
+      "X-CrowFlix-Upstream-Url": metadata,
+    }));
+    const { loader } = captureTransport(source!, fetcher);
+    const target: Record<string, unknown> = {};
+    const onloadend = vi.fn();
+    loader.load({ method: "GET", url: source!.url, customData: { onloadend } }, target);
+
+    await vi.waitFor(() => expect(onloadend).toHaveBeenCalledOnce());
+    expect(target.url).toBe(originalUrl);
+  });
+
+  it("ignores relay metadata on a response redirected away from the configured relay", async () => {
+    const originalUrl = "https://provider.test/channel.mpd";
+    const [source] = toWebPlayableSources({ id: "relay-dash", url: originalUrl, userAgent: "Provider UA" });
+    const fetcher: MediaFetcher = vi.fn(async () => responseAt("https://upstream.test/stream", "<MPD />", {
+      "X-CrowFlix-Upstream-Url": "https://spoofed.test/manifest.mpd",
+    }));
+    const { loader } = captureTransport(source!, fetcher);
+    const target: Record<string, unknown> = {};
+    const onloadend = vi.fn();
+    loader.load({ method: "GET", url: source!.url, customData: { onloadend } }, target);
+
+    await vi.waitFor(() => expect(onloadend).toHaveBeenCalledOnce());
+    expect(target.url).toBe(originalUrl);
+  });
+
   it("routes MPD, initialization and media requests through the relay while preserving logical URLs", async () => {
     let loaderFactory: (() => CapturedLoader) | undefined;
     let requestInterceptor: RequestInterceptor | undefined;

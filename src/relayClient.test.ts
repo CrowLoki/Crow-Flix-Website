@@ -51,6 +51,11 @@ describe("loadRelayGuide", () => {
 });
 
 describe("relayFetchText", () => {
+  const xml = '<tv><channel id="abc"><display-name>ABC</display-name></channel></tv>';
+  const gzip = async (text: string) => new Uint8Array(await new Response(
+    new Blob([text]).stream().pipeThrough(new CompressionStream("gzip")),
+  ).arrayBuffer());
+
   it("fetches a personal public source through the bounded no-store relay path", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       new Response("#EXTM3U\n", { status: 200 }),
@@ -73,6 +78,87 @@ describe("relayFetchText", () => {
     ));
     await expect(relayFetchText("https://provider.test/large.xml", 4))
       .rejects.toThrow(/exceeds.*browser import limit/i);
+  });
+
+  it("reads identical plain and gzip XMLTV, including split gzip magic bytes", async () => {
+    const bytes = await gzip(xml);
+    const chunks = [bytes.slice(0, 1), bytes.slice(1, 2), bytes.slice(2)];
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(xml))
+      .mockResolvedValueOnce(new Response(new ReadableStream({
+        pull(controller) {
+          const chunk = chunks.shift();
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        },
+      })));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(relayFetchText("https://provider.test/guide.xml", 1_024)).resolves.toBe(xml);
+    await expect(relayFetchText("https://provider.test/guide.xml.gz", 1_024)).resolves.toBe(xml);
+  });
+
+  it("does not decompress HTTP-decoded XML a second time", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(xml, {
+      headers: { "Content-Encoding": "gzip" },
+    })));
+    await expect(relayFetchText("https://provider.test/guide.xml.gz", 1_024)).resolves.toBe(xml);
+  });
+
+  it("rejects gzip whose expanded bytes exceed the selected limit", async () => {
+    const bytes = await gzip(`<tv>${" ".repeat(2_000)}</tv>`);
+    expect(bytes.byteLength).toBeLessThan(100);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(bytes)));
+    await expect(relayFetchText("https://provider.test/guide.xml.gz", 100))
+      .rejects.toThrow(/exceeds.*browser import limit/i);
+  });
+
+  it("accepts gzip whose expanded text is exactly at the byte limit", async () => {
+    const xml = `<tv>${" ".repeat(100)}</tv>`;
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(await gzip(xml))));
+    await expect(relayFetchText("https://provider.test/guide.xml.gz", new TextEncoder().encode(xml).byteLength))
+      .resolves.toBe(xml);
+  });
+
+  it("cancels the expanded reader on its size limit", async () => {
+    const cancel = vi.fn();
+    vi.stubGlobal("DecompressionStream", class {
+      readonly readable = new ReadableStream({
+        start(controller) { controller.enqueue(new Uint8Array(101)); }, cancel,
+      });
+      readonly writable = new WritableStream();
+    });
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(new Uint8Array([0x1f, 0x8b]))));
+    await expect(relayFetchText("https://provider.test/guide.xml.gz", 100))
+      .rejects.toThrow(/exceeds.*browser import limit/i);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a declared oversized response before reading it", async () => {
+    const cancel = vi.fn();
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(new ReadableStream({ cancel }), {
+      headers: { "Content-Length": "1025" },
+    })));
+    await expect(relayFetchText("https://provider.test/guide.xml.gz", 1_024))
+      .rejects.toThrow(/exceeds.*browser import limit/i);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("cancels when compressed bytes exceed the limit even if expanded text would fit", async () => {
+    const bytes = await gzip("<tv/>");
+    const cancel = vi.fn();
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(new ReadableStream({
+      start(controller) { controller.enqueue(bytes); },
+      cancel,
+    }))));
+    await expect(relayFetchText("https://provider.test/guide.xml.gz", 8))
+      .rejects.toThrow(/exceeds.*browser import limit/i);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("rejects corrupt or incomplete gzip instead of returning binary text", async () => {
+    const bytes = await gzip(xml);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(bytes.slice(0, -8))));
+    await expect(relayFetchText("https://provider.test/guide.xml.gz", 1_024)).rejects.toThrow();
   });
 });
 

@@ -390,6 +390,31 @@ describe("web destination library behavior", () => {
     expect(corrupt.error).toContain("valid JSON");
   });
 
+  it("retains defaults and reports denied storage reads", () => {
+    const loaded = loadWebDestinations({
+      getItem: () => {
+        throw new Error("Storage access denied");
+      },
+    });
+
+    expect(loaded.items).toEqual(DEFAULT_WEB_DESTINATIONS);
+    expect(loaded.items).not.toBe(DEFAULT_WEB_DESTINATIONS);
+    expect(loaded.error).toBe("Storage access denied");
+  });
+
+  it("retains a supplied fallback when storage access throws a non-Error", () => {
+    const fallback = [DEFAULT_WEB_DESTINATIONS[0]];
+    const loaded = loadWebDestinations({
+      getItem: () => {
+        throw "Storage unavailable";
+      },
+    }, fallback);
+
+    expect(loaded.items).toEqual(fallback);
+    expect(loaded.items).not.toBe(fallback);
+    expect(loaded.error).toBe("Storage unavailable");
+  });
+
   it("adds the CrowFlix Free Collection once when upgrading a saved v1 library", () => {
     const legacy = JSON.stringify({
       schema: WEB_DESTINATION_SCHEMA,

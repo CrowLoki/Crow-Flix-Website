@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   mergePersonalPlaylistIntoCatalog,
   parsePersonalPlaylist,
@@ -169,5 +169,68 @@ describe("personal XMLTV imports", () => {
     expect(result.source).toBe("Personal XMLTV · streamed.xmltv");
     expect(result.matchedChannels).toBe(1);
     expect(result.programmes[0]?.title).toBe("Morning News");
+  });
+
+  it.each([
+    "", "provider failed", "\u001f\u008bcompressed gibberish", "<html><body>Error</body></html>",
+    "<tv><channel></tv>", "<tv>", `${xmltv}<tv/>`, `<tv>${xmltv}</tv>`,
+    '<tv><channel id=unquoted/></tv>', '<tv><channel id="a" id="b"/></tv>',
+    '<tv><channel id="abc"><display-name>ABC & bad</display-name></channel></tv>',
+    '<tv><channel id="abc"><display-name>&#0;</display-name></channel></tv>',
+    `${xmltv}trailing garbage`, "<tv><!-- unfinished</tv>",
+    "<tv><!-- invalid -- comment --></tv>", "<tv><![CDATA[unfinished</tv>",
+    "<tv>invalid ]]> text</tv>",
+    '<!DOCTYPE tv [<!ENTITY name "ABC">]><tv/>',
+  ])("rejects malformed or non-XMLTV input before returning a result: %s", async (content) => {
+    expect(() => parsePersonalXmltv(content, channels)).toThrow(/XMLTV|XML/i);
+    const bytes = new TextEncoder().encode(content);
+    await expect(parsePersonalXmltvFile({
+      name: "broken.xml", size: bytes.byteLength, stream: () => new Blob([bytes]).stream(),
+    }, channels)).rejects.toThrow(/XMLTV|XML/i);
+  });
+
+  it("accepts valid empty and unmatched guides without treating them as corrupt", async () => {
+    expect(parsePersonalXmltv("<tv/>", channels).programmes).toEqual([]);
+    expect(parsePersonalXmltv(xmltv, [{ id: "Other.au", name: "Other channel" }]))
+      .toMatchObject({ programmes: [], matchedChannels: 0 });
+    const content = '<?xml version="1.0"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv><!-- note --></tv>';
+    const bytes = new TextEncoder().encode(content);
+    await expect(parsePersonalXmltvFile({
+      name: "empty.xml", size: bytes.byteLength, stream: () => new Blob([bytes]).stream(),
+    }, channels)).resolves.toMatchObject({ programmes: [], matchedChannels: 0 });
+  });
+
+  it("validates tags and entities split across single-byte file chunks", async () => {
+    const content = xmltv.replace("<tv>", '<tv generator-info-name="Test ]]> source"><?info provider > source?><!-- comment --><![CDATA[metadata <only>]]>')
+      .replace("Morning News", "News &amp; Weather");
+    const bytes = new TextEncoder().encode(content);
+    let offset = 0;
+    const result = await parsePersonalXmltvFile({
+      name: "chunked.xml", size: bytes.byteLength,
+      stream: () => new ReadableStream({
+        pull(controller) {
+          if (offset < bytes.byteLength) controller.enqueue(bytes.slice(offset, ++offset));
+          else controller.close();
+        },
+      }),
+    }, channels);
+    expect(result.programmes[0]?.title).toBe("News & Weather");
+  });
+
+  it("cancels a selected file as soon as malformed XML is detected", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode("<html>")); }, cancel,
+    });
+    await expect(parsePersonalXmltvFile({ name: "error.xml", size: 6, stream: () => stream }, channels))
+      .rejects.toThrow(/XMLTV|XML/i);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("rejects oversized files before opening their stream", async () => {
+    const stream = vi.fn();
+    await expect(parsePersonalXmltvFile({ name: "large.xml", size: 128 * 1024 * 1024 + 1, stream }, channels))
+      .rejects.toThrow(/128 MiB/);
+    expect(stream).not.toHaveBeenCalled();
   });
 });

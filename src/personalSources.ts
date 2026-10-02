@@ -489,7 +489,147 @@ export function mergePersonalPlaylistIntoCatalog(
   };
 }
 
-function guideParser(channels: readonly PersonalGuideChannel[]): XmltvStreamParser {
+const XML_NAME = "[\\p{L}_:][\\p{L}\\p{N}\\p{M}_.:\\-\\u00b7]*";
+const XML_OPEN_TAG = new RegExp(`^<(${XML_NAME})`, "u");
+const XML_ATTRIBUTE = new RegExp(`^\\s+(${XML_NAME})\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')`, "u");
+
+function invalidXmltv(): never {
+  throw new Error("That source is not a complete, valid XMLTV document. Choose a guide with a <tv> root element.");
+}
+
+function validateXmlText(text: string): void {
+  const remainder = text.replace(/&(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);/g, (entity) => {
+    if (entity.startsWith("&#")) {
+      const point = entity.startsWith("&#x")
+        ? Number.parseInt(entity.slice(3, -1), 16)
+        : Number.parseInt(entity.slice(2, -1), 10);
+      if (!(point === 9 || point === 10 || point === 13
+        || (point >= 0x20 && point <= 0xd7ff)
+        || (point >= 0xe000 && point <= 0xfffd)
+        || (point >= 0x10000 && point <= 0x10ffff))) invalidXmltv();
+    }
+    return "";
+  });
+  if (remainder.includes("&")) invalidXmltv();
+}
+
+/** Validate the document envelope and XML structure without retaining the guide.
+ * Programme extraction stays in the shared XMLTV parser. External DTDs are
+ * accepted as declarations only; personal imports never fetch or expand them.
+ */
+class PersonalXmltvValidator {
+  private buffer = "";
+  private readonly stack: string[] = [];
+  private rootSeen = false;
+  private doctypeSeen = false;
+  private declarationSeen = false;
+  private section: "comment" | "cdata" | null = null;
+
+  push(chunk: string): void {
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/u.test(chunk)) invalidXmltv();
+    this.buffer += chunk;
+    for (;;) {
+      if (this.section) {
+        const close = this.section === "comment" ? "-->" : "]]>";
+        const end = this.buffer.indexOf(close);
+        const content = end < 0 ? this.buffer.slice(0, -2) : this.buffer.slice(0, end);
+        if (this.section === "comment" && (content.includes("--")
+          || (end >= 0 && content.endsWith("-"))
+          || (end < 0 && this.buffer.slice(0, -1).includes("--")))) invalidXmltv();
+        if (end < 0) {
+          this.buffer = this.buffer.slice(-2);
+          return;
+        }
+        this.buffer = this.buffer.slice(end + close.length);
+        this.section = null;
+      }
+      if (!this.buffer) return;
+      if (!this.buffer.startsWith("<")) {
+        const nextTag = this.buffer.indexOf("<");
+        if ((nextTag < 0 ? this.buffer : this.buffer.slice(0, nextTag)).includes("]]>")) invalidXmltv();
+        // Retain a split entity and the ]]> sentinel across chunk boundaries.
+        const ampersand = this.buffer.lastIndexOf("&");
+        const textEnd = Math.max(0, this.buffer.length - 2);
+        const entityEnd = this.buffer.indexOf(";", ampersand);
+        const partialEntity = ampersand >= 0 && (entityEnd < 0 || entityEnd >= textEnd);
+        const end = nextTag >= 0 ? nextTag
+          : Math.min(textEnd, partialEntity ? ampersand : this.buffer.length);
+        const text = this.buffer.slice(0, end);
+        if (!this.stack.length && text.trim()) invalidXmltv();
+        validateXmlText(text);
+        this.buffer = this.buffer.slice(end);
+        if (nextTag < 0) break;
+        continue;
+      }
+      if (this.buffer.startsWith("<!--")) {
+        this.buffer = this.buffer.slice(4);
+        this.section = "comment";
+        continue;
+      }
+      if (this.buffer.startsWith("<![CDATA[")) {
+        if (!this.stack.length) invalidXmltv();
+        this.buffer = this.buffer.slice(9);
+        this.section = "cdata";
+        continue;
+      }
+      // Quoted attribute values can contain >; stop at the unquoted terminator.
+      const token = this.buffer.startsWith("<?")
+        ? /^<\?[\s\S]*?\?>/u.exec(this.buffer)?.[0]
+        : /^<(?:[^>"']|"[^"]*"|'[^']*')*>/u.exec(this.buffer)?.[0];
+      if (!token) break;
+      if (token.length > 64 * 1024) throw new Error("That XMLTV document contains an oversized XML tag.");
+      this.buffer = this.buffer.slice(token.length);
+      if (token.startsWith("<?")) {
+        if (!/^<\?[\w:-]+(?:\s[\s\S]*)?\?>$/u.test(token)) invalidXmltv();
+        if (/^<\?xml(?:\s|\?)/i.test(token)) {
+          if (this.rootSeen || this.doctypeSeen || this.declarationSeen
+            || !/^<\?xml\s+version\s*=\s*(["'])1\.[01]\1(?:\s+(?:encoding|standalone)\s*=\s*(?:"[^"]*"|'[^']*'))*\s*\?>$/u.test(token)) invalidXmltv();
+          this.declarationSeen = true;
+        }
+        continue;
+      }
+      if (token.startsWith("<!DOCTYPE")) {
+        if (this.rootSeen || this.doctypeSeen
+          || !/^<!DOCTYPE\s+tv(?:\s+SYSTEM\s+(?:"[^"]*"|'[^']*')|\s+PUBLIC\s+(?:"[^"]*"|'[^']*')\s+(?:"[^"]*"|'[^']*'))?\s*>$/u.test(token)) {
+          throw new Error("That XMLTV declaration is invalid or uses unsupported internal entities. Import a guide without an internal DTD subset.");
+        }
+        this.doctypeSeen = true;
+        continue;
+      }
+      if (token.startsWith("</")) {
+        const name = token.slice(2, -1).trimEnd();
+        if (this.stack.pop() !== name) invalidXmltv();
+        continue;
+      }
+      const name = XML_OPEN_TAG.exec(token)?.[1];
+      if (!name) invalidXmltv();
+      if (!this.stack.length) {
+        if (this.rootSeen || name !== "tv") invalidXmltv();
+        this.rootSeen = true;
+      } else if (name === "tv") invalidXmltv();
+      let rest = token.slice(name.length + 1);
+      const attributes = new Set<string>();
+      while (!/^\s*\/?>$/u.test(rest)) {
+        const attribute = XML_ATTRIBUTE.exec(rest);
+        if (!attribute || attributes.has(attribute[1])) invalidXmltv();
+        attributes.add(attribute[1]);
+        const value = attribute[2] ?? attribute[3];
+        if (value.includes("<")) invalidXmltv();
+        validateXmlText(value);
+        rest = rest.slice(attribute[0].length);
+      }
+      if (!rest.trimStart().startsWith("/")) this.stack.push(name);
+      if (this.stack.length > 64) throw new Error("That XMLTV document is nested too deeply for a browser import.");
+    }
+    if (this.buffer.length > 64 * 1024) throw new Error("That XMLTV document contains an oversized XML tag or entity.");
+  }
+
+  end(): void {
+    if (!this.rootSeen || this.stack.length || this.section || this.buffer.trim()) invalidXmltv();
+  }
+}
+
+function guideParser(channels: readonly PersonalGuideChannel[]) {
   const ids = [...new Set(channels.map((channel) => channel.id).filter(Boolean))];
   const names = new Map<string, string[]>();
   for (const channel of channels) {
@@ -498,11 +638,16 @@ function guideParser(channels: readonly PersonalGuideChannel[]): XmltvStreamPars
       .filter((name): name is string => Boolean(name)))];
     if (values.length) names.set(channel.id, values.slice(0, 12));
   }
-  return new XmltvStreamParser(ids, {}, names);
+  const parser = new XmltvStreamParser(ids, {}, names);
+  const validator = new PersonalXmltvValidator();
+  return {
+    push(chunk: string) { validator.push(chunk); parser.push(chunk); },
+    end() { validator.end(); return parser.end(); },
+  };
 }
 
 function personalGuideResult(
-  parser: XmltvStreamParser,
+  parser: ReturnType<typeof guideParser>,
   sourceName: string,
 ): PersonalGuideResult {
   const programmes = parser.end();
@@ -542,20 +687,23 @@ export async function parsePersonalXmltvFile(
   const reader = file.stream().getReader();
   const decoder = new TextDecoder();
   let total = 0;
+  let completed = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
       if (total > MAX_XMLTV_IMPORT_BYTES) {
-        await reader.cancel().catch(() => undefined);
         throw new Error(`${file.name} exceeds the 128 MiB programme-guide import limit.`);
       }
       parser.push(decoder.decode(value, { stream: true }));
     }
     parser.push(decoder.decode());
+    const result = personalGuideResult(parser, file.name);
+    completed = true;
+    return result;
   } finally {
+    if (!completed) await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
-  return personalGuideResult(parser, file.name);
 }
