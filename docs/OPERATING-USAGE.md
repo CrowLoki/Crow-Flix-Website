@@ -105,8 +105,11 @@ resolved by silently dropping baseline channels.
 | Each regional catalogue | 4 MiB compressed / 48 MiB decoded |
 
 `npm run acceptance:ci` runs two sequential, isolated local browser suites after
-the build. CI uses its preinstalled Chrome and FFmpeg; there are no new package
-dependencies or paid test services. Browser processes, profiles and synthetic
+the build. CI uses its preinstalled Chrome and installs the free FFmpeg package
+from Ubuntu's configured repositories only if it is missing, with a three-minute
+setup bound. This installation exists only on the disposable CI runner, not on
+visitors' or the owner's computers. There are no new npm dependencies or paid
+test services. Browser processes, profiles and synthetic
 media belong to one temporary root and are cleaned up on success or failure.
 If shutdown cannot be confirmed, the runner fails and reports the retained
 temporary path instead of deleting a potentially active browser profile.

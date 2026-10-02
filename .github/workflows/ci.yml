@@ -38,11 +38,19 @@ jobs:
       - name: Validate deployable site
         run: npm run check
 
+      - name: Prepare free local media-fixture encoder
+        timeout-minutes: 3
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+
       - name: Verify isolated browser and decoded-media behavior
         timeout-minutes: 8
         run: |
           export CROWFLIX_BROWSER="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)"
           export FFMPEG_PATH="$(command -v ffmpeg)"
-          test -n "$CROWFLIX_BROWSER"
-          test -n "$FFMPEG_PATH"
+          test -n "$CROWFLIX_BROWSER" || { echo "Missing runner browser"; exit 1; }
+          test -n "$FFMPEG_PATH" || { echo "Missing fixture encoder"; exit 1; }
           npm run acceptance:ci
