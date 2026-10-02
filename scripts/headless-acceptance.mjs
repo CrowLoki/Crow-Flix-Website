@@ -265,7 +265,7 @@ try {
     localOnly: document.querySelector('.crow-guide-bubble')?.innerText.includes('stay on this device') || false,
     noExternalAi: document.querySelector('.crow-guide-bubble')?.innerText.includes('No external AI') || false,
     search: Boolean(document.querySelector('.crow-guide-search input')),
-    quickActions: document.querySelectorAll('.crow-guide-quick button').length,
+    quickActions: [...document.querySelectorAll('.crow-guide-quick button')].map((button) => button.textContent.trim()),
     candidates: document.querySelectorAll('.crow-guide-result').length,
     somethingElse: [...document.querySelectorAll('.crow-guide-actions button')].some((button) => button.textContent.includes('Something else'))
   })`);
@@ -281,7 +281,7 @@ try {
   })()`);
   await evaluate(`[...document.querySelectorAll('.crow-guide-quick button')].find((button) => button.textContent.includes('On now'))?.click()`);
   await waitFor("[...document.querySelectorAll('.crow-guide-actions button')].some((button) => button.textContent.includes('Load live guide'))");
-  helper.honestGuideFallback = await evaluate("document.querySelector('.crow-guide-answer')?.textContent.includes('do not have current programme listings') || false");
+  helper.honestGuideFallback = await evaluate("document.querySelector('.crow-guide-answer')?.textContent.includes('schedule may be incomplete') || false");
   await evaluate("document.querySelector('.crow-guide-bubble button[aria-label]')?.click()");
   await waitFor("!document.querySelector('.crow-guide-bubble')");
   await evaluate(`[...document.querySelectorAll('.topbar nav button')].find((button) => button.textContent.includes('Live TV'))?.click()`);
@@ -417,7 +417,7 @@ try {
 
   const assertions = {
     homeLoaded: home.cards > 0 && home.addSource && home.liveNav && home.audienceFirst && home.entertainmentFirst && home.enlargedClawCursor && home.helper && home.brandAccessible && !home.desktopDownload && home.headerFits && home.responsiveHeader.every((item) => item.fits),
-    crowGuide: helper.localOnly && helper.noExternalAi && helper.search && helper.quickActions === 3 && helper.candidates > 0 && helper.somethingElse && helper.usefulSearch && helper.honestGuideFallback,
+    crowGuide: helper.localOnly && helper.noExternalAi && helper.search && ['On now', 'Movies tonight', 'My List', 'Recent'].every((label) => helper.quickActions.includes(label)) && helper.candidates > 0 && helper.somethingElse && helper.usefulSearch && helper.honestGuideFallback,
     accountFoundation: accountSettings.anonymous && accountSettings.optional && accountSettings.honestFoundation && accountSettings.noDeadSignIn && accountSettings.reminder && accountSettings.initialFocus && accountSettings.historyBackClosed && accountSettings.historyForwardRestored && accountSettings.preferencePersisted && accountSettings.reloadPersisted && accountSettings.preferenceReset && accountSettings.escapeDismissed && accountSettings.focusReturned && accountSettings.exploreEntry,
     explorePopout: explore.title.includes('Explore') && explore.options > 1 && explore.overlay,
     fullLivePage: live.cards === 48 && live.providers && live.owners && live.fullCopy && live.preferredOrder && live.honestTotals,

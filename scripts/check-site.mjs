@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { measureResourceBudgets } from "./resource-budgets.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(repositoryRoot, "dist");
@@ -224,6 +225,7 @@ const mainScript = builtIndex.match(/<script[^>]+type="module"[^>]+src="(\/asset
 assert(mainScript, "Built index does not identify its main module bundle");
 const mainScriptDetails = await stat(path.join(distRoot, mainScript.replace(/^\//, "")));
 assert(mainScriptDetails.size <= 500 * 1024, `Initial JavaScript exceeds 500 KiB: ${mainScriptDetails.size} bytes`);
+console.log(`Release resource budgets: ${JSON.stringify(await measureResourceBudgets(distRoot, mainScript))}`);
 assert(files.some((file) => /[\\/]hls-[^\\/]+\.js$/i.test(file)), "The production build has no lazy HLS.js chunk");
 
 for (const match of builtIndex.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)) {

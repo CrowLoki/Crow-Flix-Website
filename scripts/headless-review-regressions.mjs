@@ -11,13 +11,13 @@ if (!["127.0.0.1", "localhost", "[::1]"].includes(targetUrl.hostname)) {
   throw new Error("Review regressions require a local preview URL.");
 }
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const temporaryRoot = path.resolve(tmpdir());
+const temporaryRoot = path.resolve(process.env.CROWFLIX_ACCEPTANCE_TEMP_ROOT || tmpdir());
 const profileDirectory = mkdtempSync(path.join(temporaryRoot, "crowflix-review-regressions-"));
-const candidates = process.platform === "win32" ? [
+const candidates = [process.env.CROWFLIX_BROWSER, ...(process.platform === "win32" ? [
   path.join(process.env.PROGRAMFILES || "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
   path.join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Microsoft", "Edge", "Application", "msedge.exe"),
 ] : process.platform === "darwin" ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
-  : ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
+  : ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"])].filter(Boolean);
 
 const channel = (id, name, country, host) => ({
   key: `${id}@main`, id, name, country, isMain: true,
@@ -27,7 +27,7 @@ const channel = (id, name, country, host) => ({
 const fixtureCatalog = {
   channels: [
     channel("RegressionCinema.au", "Regression Cinema", "AU", "catalog-cinema.test"),
-    channel("RegressionComedy.us", "Regression Comedy", "US", "catalog-comedy.test"),
+    { ...channel("RegressionComedy.us", "Regression Comedy", "US", "catalog-comedy.test"), categories: ["movies", "comedy"] },
   ],
   categories: [{ id: "movies", name: "Movies", count: 2 }],
   countries: ["AU", "US"].map((code) => ({ code, name: code, flag: "", languages: ["English"], count: 1 })),
@@ -88,14 +88,17 @@ function createCdpClient(url) {
 }
 
 // Installed before any application code, including lazy modules, evaluates.
-function installFixtures({ catalog, urlPlaylist, url, storage, catalogMode }) {
+function installFixtures({ catalog, urlPlaylist, url, storage, catalogMode, retainStorage, enableCache }) {
   const state = window.__review = {
     catalogMode, catalogRequests: 0, playlistRequests: 0, storageAttempts: 0,
     errors: [], blockedFetches: [], releaseCatalog: null,
   };
   window.addEventListener("error", (event) => state.errors.push(event.error?.name + ": " + event.message));
   window.addEventListener("unhandledrejection", (event) => state.errors.push(String(event.reason)));
-  window.localStorage.clear();
+  if (!retainStorage || !sessionStorage.getItem("review-initialized")) {
+    window.localStorage.clear();
+    sessionStorage.setItem("review-initialized", "1");
+  }
   if (storage === "getter") {
     Object.defineProperty(window, "localStorage", { configurable: true, get() {
       state.storageAttempts += 1;
@@ -109,7 +112,7 @@ function installFixtures({ catalog, urlPlaylist, url, storage, catalogMode }) {
   }
   // Prevent snapshot fallbacks masking an uncached failure and avoid per-case
   // guide/cache persistence. This affects only the newly created test context.
-  Object.defineProperty(window, "caches", { configurable: true, value: undefined });
+  if (!enableCache) Object.defineProperty(window, "caches", { configurable: true, value: undefined });
   const originalFetch = window.fetch.bind(window);
   window.fetch = async (input, init) => {
     const requested = new URL(typeof input === "string" ? input : input.url || String(input), location.href);
@@ -192,13 +195,13 @@ async function withPage(options, run) {
     const input = async (selector, value) => {
       await evaluate(`(() => { const element = document.querySelector(${JSON.stringify(selector)}); if (!element) throw new Error('Missing input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, ${JSON.stringify(value)}); element.dispatchEvent(new Event('input', { bubbles: true })); })()`);
     };
-    const app = { evaluate, waitFor, click, button, input };
+    const app = { evaluate, waitFor, click, button, input, reload: () => page.send("Page.reload"), viewport: (width, height) => page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false }), key: (key) => page.send("Input.dispatchKeyEvent", { type: "keyDown", key, code: key, windowsVirtualKeyCode: key === "Escape" ? 27 : 13 }) };
     await page.send("Page.navigate", { url: targetUrl.href });
-    await waitFor("document.readyState === 'complete' && Boolean(window.__review)", "App document should load");
+    await waitFor("Boolean(document.querySelector('.topbar')) && Boolean(window.__review)", "App controls should load", 15_000);
     await run(app);
     assert.deepEqual(await evaluate("window.__review.errors"), [], "Interactions must not emit uncaught application exceptions");
     assert.deepEqual(networkErrors, [], "Network interception must remain active");
-    return { ...await evaluate("({ catalogueRequests: window.__review.catalogRequests, playlistRequests: window.__review.playlistRequests, storageAttempts: window.__review.storageAttempts })"), blockedNetworkRequests: blockedNetwork.length };
+    return { ...await evaluate("({ catalogueRequests: window.__review.catalogRequests, playlistRequests: window.__review.playlistRequests, storageAttempts: window.__review.storageAttempts, blockedFetches: window.__review.blockedFetches.length, budget: window.__review.budget })"), blockedNetworkRequests: blockedNetwork.length };
   } finally {
     page?.socket.close();
     await browserClient.send("Target.disposeBrowserContext", { browserContextId });
@@ -373,6 +376,62 @@ try {
     await expectCards(app, ["Regression Cinema", "Regression Comedy", "Regression Pending"]);
     await routes(app, ["catalog-cinema.test", "personal-pending.test"]);
   });
+  await test("ordinary browsing and cached reload stay within request budgets", { retainStorage: true, enableCache: true }, async (app) => {
+    await loaded(app);
+    assert.equal(await app.evaluate("window.__review.catalogRequests"), 1, "A cold visit fetches exactly one static catalogue");
+    await browse(app);
+    await app.input('.topbar .search input', 'Regression');
+    await app.click('.heart-button[aria-label="Toggle Regression Cinema favourite"]');
+    await app.button('.topbar nav button', 'My List');
+    await app.click('.crow-guide-avatar');
+    await app.waitFor("Boolean(document.querySelector('.crow-guide-answer'))", "Local helper should answer");
+    await delay(1_100);
+    assert.equal(await app.evaluate("window.__review.catalogRequests"), 1, "Search, favourites and helper must not reload the catalogue");
+    assert.deepEqual(await app.evaluate("window.__review.blockedFetches"), [], "Ordinary interactions must not fetch guides, media or remote AI");
+    await app.reload();
+    await loaded(app);
+    assert.equal(await app.evaluate("window.__review.catalogRequests"), 0, "A fresh browser cache must avoid a catalogue download after reload");
+    assert.deepEqual(await app.evaluate("window.__review.blockedFetches"), [], "Warm visit must not start background services");
+    await app.evaluate("window.__review.budget = { coldCatalogueRequests: 1, warmCatalogueRequests: 0, interactionRequests: 0, remoteAiRequests: 0 }");
+  });
+  await test("helper closes with Escape and returns keyboard focus", {}, async (app) => {
+    await loaded(app);
+    await app.click('.crow-guide-avatar');
+    await app.waitFor("document.activeElement === document.querySelector('.crow-guide-search input')", "Helper should focus its question field");
+    await app.key('Escape');
+    await app.waitFor("!document.querySelector('.crow-guide-bubble') && document.activeElement === document.querySelector('.crow-guide-avatar')", "Escape should return focus to the helper trigger");
+  });
+  await test("catalogue search matches reordered words", {}, async (app) => {
+    await loaded(app);
+    await browse(app);
+    await app.input('.topbar .search input', 'cinema regression');
+    await app.waitFor("document.querySelectorAll('.browse-results .channel-card').length === 1", "Reordered words must match the same channel");
+    await expectCards(app, ['Regression Cinema']);
+  });
+  await test("helper respects exclusions without network work", {}, async (app) => {
+    await loaded(app);
+    await app.click('.crow-guide-avatar');
+    await app.input('.crow-guide-search input', 'movies not comedy');
+    await app.click('.crow-guide-search button[type=submit]');
+    await app.waitFor("document.querySelectorAll('.crow-guide-result').length === 1 && document.querySelector('.crow-guide-result strong')?.textContent === 'Regression Cinema'", "Helper must exclude comedy instead of treating not as a search word");
+    assert.deepEqual(await app.evaluate("window.__review.blockedFetches"), [], "Helper answers must stay local");
+  });
+  await test("helper and navigation remain accessible at narrow and desktop widths", {}, async (app) => {
+    await loaded(app);
+    for (const [width, height] of [[360, 640], [1440, 900]]) {
+      await app.viewport(width, height);
+      assert.equal(await app.evaluate("[...document.querySelectorAll('.topbar nav button')].every((button) => Boolean(button.getAttribute('aria-label')))"), true, "Icon-only navigation needs accessible labels");
+      assert.equal(await app.evaluate("document.querySelector('.topbar .search input').getAttribute('aria-label')"), "Search channels");
+      await app.click('.crow-guide-avatar');
+      await app.waitFor("Boolean(document.querySelector('.crow-guide-bubble'))", "Helper should open at this viewport");
+      await app.waitFor(`(() => { const panel = document.querySelector('.crow-guide-bubble'); const bounds = panel.getBoundingClientRect(); return bounds.left >= 0 && bounds.top >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight && panel.scrollWidth <= panel.clientWidth + 1; })()`, `Helper must fit the ${width}x${height} viewport without clipped controls`);
+      await app.button('.crow-guide-quick button', 'Movies tonight');
+      await app.waitFor("document.querySelector('.crow-guide-answer')?.textContent.includes('may be incomplete')", "Missing schedules must be explained honestly");
+      await app.key('Escape');
+      await app.waitFor("!document.querySelector('.crow-guide-bubble') && document.activeElement === document.querySelector('.crow-guide-avatar')", "Helper close must restore keyboard focus");
+    }
+    assert.deepEqual(await app.evaluate("window.__review.blockedFetches"), [], "Responsive helper checks must not trigger guide or AI calls");
+  });
 } finally {
   if (browserClient && browser?.exitCode === null) {
     await Promise.race([browserClient.send("Browser.close").catch(() => undefined), delay(2_000)]);
@@ -385,11 +444,14 @@ try {
       await Promise.race([new Promise((resolve) => browser.once("exit", resolve)), delay(5_000)]);
     }
   }
+  // Chromium subprocesses can retain inherited stderr after the browser exits.
+  // Dispose our pipe explicitly so a finished acceptance run exits naturally.
+  browser?.stderr?.destroy();
   assert.equal(path.dirname(path.resolve(profileDirectory)), temporaryRoot, "Only this test's isolated browser profile may be removed");
   for (let attempt = 0; attempt < 80; attempt += 1) {
     try { rmSync(profileDirectory, { recursive: true, force: true }); break; }
     catch (error) { if (attempt === 79) throw error; await delay(250); }
   }
 }
-console.log(JSON.stringify({ ok: results.length === 8 && results.every((result) => result.ok), results }, null, 2));
-if (results.length !== 8 || results.some((result) => !result.ok)) process.exitCode = 1;
+console.log(JSON.stringify({ ok: results.length === 13 && results.every((result) => result.ok), results }, null, 2));
+if (results.length !== 13 || results.some((result) => !result.ok)) process.exitCode = 1;

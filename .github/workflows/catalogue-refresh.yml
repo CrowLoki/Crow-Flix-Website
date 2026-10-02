@@ -5,7 +5,8 @@ on:
     - cron: "23 18 * * *"
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: catalogue-refresh
@@ -14,12 +15,29 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 16
     steps:
+      - name: Check out publication verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
       - name: Rebuild the existing Pages production branch
+        id: rebuild
         env:
           CATALOGUE_REBUILD_HOOK: ${{ secrets.CROWFLIX_CATALOG_REBUILD_HOOK }}
         run: |
           test -n "$CATALOGUE_REBUILD_HOOK"
-          curl --fail --silent --show-error --max-time 45 \
+          echo "requested_at=$(node -p 'new Date().toISOString()')" >> "$GITHUB_OUTPUT"
+          curl --fail --silent --max-time 45 \
             --request POST "$CATALOGUE_REBUILD_HOOK" --output /dev/null
+          echo "Rebuild request accepted; publication has not yet been verified."
+
+      - name: Verify fresh published regional catalogues
+        timeout-minutes: 13
+        run: node scripts/verify-published-catalogue.mjs --after "${{ steps.rebuild.outputs.requested_at }}"

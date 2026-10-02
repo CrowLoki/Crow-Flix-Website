@@ -537,6 +537,7 @@ main { min-height: calc(100vh - 122px); }
 .crow-guide-search input::placeholder { color: #71849a; }
 .crow-guide-search button { width: 34px; height: 32px; display: grid; place-items: center; border: 1px solid rgba(51, 214, 255, .28); border-radius: 7px; cursor: var(--cursor-link); color: white; background: rgba(34, 144, 197, .3); }
 .crow-guide-search button:disabled { cursor: default; opacity: .38; }
+.crow-guide-help { display: block; margin: 7px 0; color: #b8c9dc; font-size: 11px; line-height: 1.45; }
 .crow-guide-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0 12px; }
 .crow-guide-quick button { display: flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; cursor: var(--cursor-link); color: #ccecff; background: rgba(12, 34, 55, .78); font-size: 10px; font-weight: 700; }
 .crow-guide-answer { margin: 0 0 10px; color: #d6dbe6; font-size: 12px; line-height: 1.5; }
