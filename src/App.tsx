@@ -99,6 +99,7 @@ import {
   prioritizeEnglishAustraliaUnitedStates,
 } from "./audiencePreferences";
 import { answerCrowGuide, type CrowGuideIntent } from "./crowGuide";
+import { createChannelSearchIndex } from "./catalogSearch";
 import {
   clearAccountPromptPreference,
   loadAccountPromptPreference,
@@ -1036,9 +1037,12 @@ export default function App() {
     [catalog.channels, healthNow, playbackHealth, sourcePreflights],
   );
 
+  const searchCatalogue = useMemo(() => createChannelSearchIndex(
+    catalog.channels.map((channel) => ({ ...channel, countryName: countryName(channel.country) })),
+  ), [catalog.channels]);
   const filteredChannels = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    const matching = catalog.channels.filter((channel) => {
+    const needle = query.trim();
+    const matching = (needle ? searchCatalogue(needle) : catalog.channels).filter((channel) => {
       if (
         country !== "all"
         && !channelMatchesCountry(channel, country, catalog.regions)
@@ -1059,7 +1063,6 @@ export default function App() {
         && !channelMatchesTimezone(channel, timezone)
       ) return false;
       if (!channelMatchesMetadataFilters(channel, { owner, network, feed, provider })) return false;
-      if (needle && !`${channel.name} ${(channel.altNames || []).join(" ")} ${(channel.owners || []).join(" ")} ${(channel.provenance || []).join(" ")} ${channel.network || ""} ${channel.categories.join(" ")} ${channel.languages.join(" ")} ${(channel.timezones || []).join(" ")} ${channel.broadcastArea.join(" ")} ${countryName(channel.country)}`.toLowerCase().includes(needle)) return false;
       return true;
     });
     return prioritizeEnglishAustraliaUnitedStates(rankChannelsByAvailability(
@@ -1068,7 +1071,7 @@ export default function App() {
       healthNow,
       sourcePreflights,
     ));
-  }, [catalog.channels, catalog.regions, category, city, country, feed, healthNow, language, network, owner, playbackHealth, provider, query, region, sourcePreflights, subdivision, timezone]);
+  }, [catalog.channels, catalog.regions, searchCatalogue, category, city, country, feed, healthNow, language, network, owner, playbackHealth, provider, query, region, sourcePreflights, subdivision, timezone]);
 
   const favouriteChannels = useMemo(() => favourites.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, favourites]);
   const recentChannels = useMemo(() => recent.map((key) => catalog.channels.find((channel) => channel.key === key)).filter(Boolean) as Channel[], [catalog.channels, recent]);
@@ -1256,10 +1259,14 @@ function CrowGuide({ channels, programmes, recent, favourites, clock, availabili
   const [draft, setDraft] = useState("");
   const [request, setRequest] = useState<{ query: string; mode?: CrowGuideIntent }>({ query: "" });
   const [offset, setOffset] = useState(0);
-  const activityTimer = useRef<number | undefined>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
+  const avatarRef = useRef<HTMLButtonElement>(null);
+  const closeHelper = useCallback(() => {
+    setOpen(false);
+    avatarRef.current?.focus();
+  }, []);
   const response = useMemo(
-    () => answerCrowGuide({
+    () => open ? answerCrowGuide({
       channels,
       programmes,
       recent,
@@ -1274,8 +1281,8 @@ function CrowGuide({ channels, programmes, recent, favourites, clock, availabili
       preferredCountry,
       preferredCategory,
       preferredLanguage,
-    }),
-    [availability, channels, clock, countries, favourites, offset, preferredCategory, preferredCountry, preferredLanguage, programmes, recent, regions, request],
+    }) : null,
+    [open, availability, channels, clock, countries, favourites, offset, preferredCategory, preferredCountry, preferredLanguage, programmes, recent, regions, request],
   );
   const askMode = (mode: CrowGuideIntent) => {
     setRequest({ query: "", mode });
@@ -1288,45 +1295,35 @@ function CrowGuide({ channels, programmes, recent, favourites, clock, availabili
     setOffset(0);
   };
   useEffect(() => {
-    const reactToPointer = () => {
-      setCurious(true);
-      window.clearTimeout(activityTimer.current);
-      activityTimer.current = window.setTimeout(() => setCurious(false), 900);
-    };
-    window.addEventListener("pointermove", reactToPointer, { passive: true });
-    return () => {
-      window.removeEventListener("pointermove", reactToPointer);
-      window.clearTimeout(activityTimer.current);
-    };
-  }, []);
-  useEffect(() => {
     if (!open) return undefined;
     inputRef.current?.focus();
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") closeHelper();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [open]);
+  }, [open, closeHelper]);
   return <aside className={`crow-guide ${open ? "crow-guide-open" : ""} ${curious ? "crow-guide-curious" : ""}`} aria-label="CrowFlix helper">
-    {open && <div className="crow-guide-bubble" role="dialog" aria-modal="false" aria-labelledby="crow-guide-title">
-      <button aria-label="Close CrowFlix helper" onClick={() => setOpen(false)}><X /></button>
+    {open && response && <div id="crow-guide-panel" className="crow-guide-bubble" role="dialog" aria-modal="false" aria-labelledby="crow-guide-title">
+      <button aria-label="Close CrowFlix helper" onClick={closeHelper}><X /></button>
       <strong id="crow-guide-title">Baby CrowBot</strong>
       <span className="crow-guide-kicker">Your local CrowFlix guide</span>
       <form className="crow-guide-search" onSubmit={submitQuestion}>
         <MagnifyingGlass />
-        <input ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={300} aria-label="Ask Baby CrowBot" placeholder="Try Australian comedy or ABC News" />
+        <input ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={300} aria-label="Ask Baby CrowBot" aria-describedby="crow-guide-help" placeholder="Try English movies, not news" />
         <button type="submit" disabled={!draft.trim()} aria-label="Ask Baby CrowBot"><CaretRight weight="bold" /></button>
       </form>
+      <small id="crow-guide-help" className="crow-guide-help">Search by channel, country or language. Use “not” to leave something out.</small>
       <div className="crow-guide-quick" aria-label="Baby CrowBot quick questions">
         <button onClick={() => askMode("now")}><CalendarDots /> On now</button>
+        <button onClick={() => { setRequest({ query: "movies tonight" }); setDraft("movies tonight"); setOffset(0); }}><Clock /> Movies tonight</button>
         <button onClick={() => askMode("favourites")}><Heart /> My List</button>
         <button onClick={() => askMode("recent")}><Clock /> Recent</button>
       </div>
       <p className="crow-guide-answer" aria-live="polite">{response.message}</p>
       {response.candidates.length > 0 && <div className="crow-guide-results">
         {response.candidates.map(({ channel, programme, reason, availability: state }) => <button key={channel.key} className="crow-guide-result" data-availability={state} onClick={() => { onPlay(channel); setOpen(false); }}>
-          <span className="crow-guide-result-copy"><strong>{channel.name}</strong>{programme && <b>{programme.title}</b>}<small>{reason}</small></span>
+          <span className="crow-guide-result-copy"><strong>{channel.name}</strong>{programme && <b>{programme.title} · {new Date(programme.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</b>}<small>{reason}</small></span>
           <span className="crow-guide-result-action"><em>{availabilityLabel(state)}</em><Play weight="fill" /></span>
         </button>)}
       </div>}
@@ -1335,9 +1332,9 @@ function CrowGuide({ channels, programmes, recent, favourites, clock, availabili
         {response.needsGuide && <button className="crow-guide-link" onClick={() => { onGuide(); setOpen(false); }}><CalendarDots /> Load live guide</button>}
         {(request.query || request.mode) && <button className="crow-guide-reset" onClick={() => { setRequest({ query: "" }); setDraft(""); setOffset(0); }}>Start over</button>}
       </div>
-      <small className="crow-guide-privacy">Catalogue search, My List, recent channels and loaded guide data stay on this device. No external AI.</small>
+      <small className="crow-guide-privacy">Programme times use your device timezone. Catalogue search, My List, recent channels and loaded guide data stay on this device. No external AI.</small>
     </div>}
-    <button className="crow-guide-avatar" aria-expanded={open} aria-label="Open CrowFlix helper" onClick={() => setOpen((value) => !value)}><img src={CROW_HELPER_PIXEL_IMAGE} alt="Animated pixel CrowFlix helper" /><span>?</span></button>
+    <button ref={avatarRef} className="crow-guide-avatar" aria-expanded={open} aria-controls={open ? "crow-guide-panel" : undefined} aria-label="Open CrowFlix helper" onPointerEnter={() => setCurious(true)} onPointerLeave={() => setCurious(false)} onClick={() => setOpen((value) => !value)}><img src={CROW_HELPER_PIXEL_IMAGE} alt="Animated pixel CrowFlix helper" /><span>?</span></button>
   </aside>;
 }
 
@@ -1345,8 +1342,8 @@ function Header({ view, onView, query, onQuery, onSource, onAccount, canAddSourc
   const nav: Array<[View, string, React.ReactNode]> = [["home", "Home", <House />], ["live", "Live TV", <Broadcast />], ["guide", "Guide", <CalendarDots />], ["web", "CrowFlix Free", <GlobeHemisphereWest />], ["favourites", "My List", <Heart />], ["about", "About", <Info />]];
   return <header className="topbar">
     <button className="brand" aria-label="CrowFlix home" onClick={() => onView("home")}><img src={BRAND_ICON} alt="" /><span>CROW<strong>FLIX</strong></span></button>
-    <nav>{nav.map(([id, label, icon]) => <button key={id} className={view === id ? "active" : ""} onClick={() => onView(id)}>{icon}<span>{label}</span></button>)}</nav>
-    <div className="header-actions"><label className="search"><MagnifyingGlass /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder={view === "web" ? "Search websites" : "Search the world"} />{query && <button aria-label="Clear search" onClick={() => onQuery("")}><X /></button>}</label>{canAddSource && <button className="source-button" onClick={onSource}><Plus /><span>Add source</span></button>}<button className="account-button" aria-label="Open account settings" onClick={onAccount}><UserCircle /><span>Account</span></button></div>
+    <nav aria-label="Main navigation">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} aria-current={view === id ? "page" : undefined} className={view === id ? "active" : ""} onClick={() => onView(id)}>{icon}<span>{label}</span></button>)}</nav>
+    <div className="header-actions"><label className="search"><MagnifyingGlass /><input value={query} onChange={(event) => onQuery(event.target.value)} aria-label={view === "web" ? "Search websites" : "Search channels"} placeholder={view === "web" ? "Search websites" : "Search the world"} />{query && <button aria-label="Clear search" onClick={() => onQuery("")}><X /></button>}</label>{canAddSource && <button className="source-button" aria-label="Add source" onClick={onSource}><Plus /><span>Add source</span></button>}<button className="account-button" aria-label="Open account settings" onClick={onAccount}><UserCircle /><span>Account</span></button></div>
   </header>;
 }
 
@@ -1759,16 +1756,13 @@ function Player({
     }
     return active;
   }, [clock, programmes]);
+  const searchGuideChannels = useMemo(() => createChannelSearchIndex(
+    channels.map((candidate) => ({ ...candidate, countryName: countryName(candidate.country) })),
+  ), [channels]);
   const guideChannels = useMemo(() => {
-    const term = guideQuery.trim().toLocaleLowerCase();
+    const term = guideQuery.trim();
     if (term) {
-      return channels.filter((candidate) => [
-        candidate.name,
-        ...(candidate.altNames || []),
-        candidate.network || "",
-        ...(candidate.owners || []),
-        countryName(candidate.country),
-      ].some((value) => value.toLocaleLowerCase().includes(term))).slice(0, 40);
+      return searchGuideChannels(term).slice(0, 40);
     }
     if (!channels.length) return [];
     const start = Math.max(0, channels.findIndex((candidate) => candidate.key === channel.key));
@@ -1776,7 +1770,7 @@ function Player({
       { length: Math.min(30, channels.length) },
       (_, offset) => channels[(start + offset) % channels.length],
     );
-  }, [channel.key, channels, guideQuery]);
+  }, [channel.key, channels, guideQuery, searchGuideChannels]);
 
   const wake = useCallback(() => {
     setChromeVisible(true);

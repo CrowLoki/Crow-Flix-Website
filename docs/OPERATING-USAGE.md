@@ -25,6 +25,14 @@ hook URL exists only in the encrypted Actions secret
 `CROWFLIX_CATALOG_REBUILD_HOOK`. It uses the existing Git integration and does
 not upload a replacement Pages project or introduce a Worker cron.
 
+Hook acceptance is not publication proof. After the existing daily rebuild,
+the workflow polls the Sydney snapshot at most once per minute for twelve
+minutes, then verifies all eight regions share one preparation timestamp after
+the request. It validates HTTP status, gzip/JSON integrity, channel/source
+structure and a minimum viable catalogue. Requests are individually bounded
+and the entire verification run has a 256 MiB transfer ceiling. This checks
+static Pages assets only; it adds no Worker schedule or provider probe.
+
 Refresh catalogue reloads the published static snapshot. It does not rebuild
 the upstream catalogue. Browser storage reuses that snapshot for 24 hours and
 serves it if a later refresh fails. Static files advertise a one-hour HTTP
@@ -66,6 +74,59 @@ watching. That remaining usage depends on viewers and stream segment sizes.
 The guide integration fixture reduces three upstream calls to one on a shared
 cache hit: verification remains, guide-index and XMLTV calls disappear.
 Release measurements must distinguish cold requests from cache hits.
+
+## Local helper and search
+
+Catalogue and in-player search share an accent-insensitive, word-order-independent
+index, rebuilt only when their catalogue changes. It includes display metadata,
+not media URLs or provider request headers. A local measurement using 12,975
+Sydney channels returned identical ordered results in twenty paired searches:
+index construction took 334 ms once, followed by 2.1–5.7 ms searches instead of
+176–377 ms repeatedly normalizing every channel. These are workstation timings,
+not guarantees for all visitor devices.
+
+Baby CrowBot remains local: channel/country/language queries, exclusions such as
+`English movies not news`, favourites, recent channels, and now/upcoming/tonight
+queries use only the catalogue and already-loaded guide. Tonight means the
+remaining 18:00–24:00 window in the device timezone. Missing listings are stated
+as incomplete guide data, not invented schedules. The helper does not scan the
+catalogue while closed and does not subscribe to global pointer movements.
+
+## Release budgets and browser checks
+
+`npm run check` enforces the following release budgets and reports measured
+sizes for every regional snapshot. These are project safeguards, not billing
+quotas. Exceeding one stops the release for investigation; it must never be
+resolved by silently dropping baseline channels.
+
+| Resource | Budget |
+| --- | --- |
+| Initial application JavaScript | 500 KiB raw / 180 KiB gzip |
+| Each regional catalogue | 4 MiB compressed / 48 MiB decoded |
+
+`npm run acceptance:ci` runs two sequential, isolated local browser suites after
+the build. CI uses its preinstalled Chrome and FFmpeg; there are no new package
+dependencies or paid test services. Browser processes, profiles and synthetic
+media belong to one temporary root and are cleaned up on success or failure.
+If shutdown cannot be confirmed, the runner fails and reports the retained
+temporary path instead of deleting a potentially active browser profile.
+Application regressions have a three-minute deadline; decoded playback has
+three minutes plus a bounded fifty-second outer cleanup allowance. Wrapped
+browser descendants remain inside the runner's owned process group.
+CI runs on pull requests and pushes to `main`, avoiding duplicate feature-branch
+push and pull-request runs for the same proposed change.
+
+The application regression suite exercises storage failures, import/refresh
+races, search, exclusions and keyboard focus. Its request budget allows one
+static catalogue fetch on a cold visit, none on a fresh cached reload, and no
+guide, media or remote-AI fetches from ordinary search/favourites/helper use.
+
+Decoded-playback acceptance generates under 2 MiB of synthetic video locally
+and requires advancing playback time and decoded frames through the real app
+and relay source. It covers progressive byte ranges/seeking, direct HLS/DASH,
+redirected relay HLS/DASH, provider-header DASH and direct-failure relay recovery.
+External requests are blocked. This verifies our playback paths, not the
+availability, account requirements or geographic restrictions of every provider.
 
 Cloudflare documents static Pages requests as free and unlimited when Functions
 are not invoked. Worker inbound requests and CPU use their separate allocations;

@@ -138,3 +138,131 @@ describe("CrowFlix local helper", () => {
     expect(() => answerCrowGuide({ channels, programmes, favourites, recent, availability, query: "on now", now })).not.toThrow();
   });
 });
+
+describe("CrowGuide local query corpus", () => {
+  const channels = [
+    channel("comedy", { name: "Laughs", categories: ["comedy"], languages: ["eng"] }),
+    channel("mixed", { name: "Comedy News", categories: ["comedy", "news"], languages: ["English"] }),
+    channel("news", { name: "Newsroom", categories: ["news"] }),
+    channel("french", { name: "Rires", categories: ["comedy"], country: "FR", languages: ["fra"] }),
+    channel("unknown-language", { name: "Unlabelled Laughs", categories: ["comedy"], languages: [] }),
+  ];
+
+  it.each(["comedy not news", "comedy without news", "comedy excluding news", "comedy but not news"])("respects exclusions in %s", (query) => {
+    const result = answerCrowGuide({ channels, query, now });
+    expect(result.candidates.map((item) => item.channel.key).sort()).toEqual(["comedy", "french", "unknown-language"]);
+  });
+
+  it.each(["English comedy not news", "comedy not news in English", "comedy in en", "English-only comedy without news"])("uses language metadata as a constraint for %s", (query) => {
+    const result = answerCrowGuide({ channels: channels.filter((item) => item.key !== "mixed"), query, now });
+    expect(result.candidates.map((item) => item.channel.key)).toEqual(["comedy"]);
+  });
+
+  it("recognizes language names and excludes languages without confusing channel titles", () => {
+    expect(answerCrowGuide({ channels, query: "French comedy", now }).candidates.map((item) => item.channel.key)).toEqual(["french"]);
+    expect(answerCrowGuide({ channels, query: "comedy not French", now }).candidates.some((item) => item.channel.key === "french")).toBe(false);
+    expect(answerCrowGuide({ channels: [channel("false", { name: "English Comedy", languages: ["Spanish"] })], query: "comedy in English", now }).total).toBe(0);
+  });
+
+  it("keeps country aliases and My List constraints with exclusions", () => {
+    const result = answerCrowGuide({ channels, favourites: ["comedy", "mixed", "french"], query: "my favourites Australian comedy not news in English", now });
+    expect(result.candidates.map((item) => item.channel.key)).toEqual(["comedy"]);
+    expect(result.intent).toBe("favourites");
+  });
+
+  const scheduleChannels = [channel("first"), channel("later"), channel("tomorrow"), channel("no-guide")];
+  const programmes = [
+    programme("first", "Current News", { category: "news" }),
+    programme("first", "Evening Laughs", { start: "2026-09-12T20:30:00+10:00", stop: "2026-09-12T21:30:00+10:00", category: "comedy" }),
+    programme("later", "Late Laughs", { start: "2026-09-12T22:30:00+10:00", stop: "2026-09-12T23:30:00+10:00", category: "comedy" }),
+    programme("tomorrow", "Tomorrow Laughs", { start: "2026-09-13T00:00:00+10:00", stop: "2026-09-13T01:00:00+10:00", category: "comedy" }),
+  ];
+
+  it.each(["upcoming comedy", "comedy coming up", "what is on next comedy"])("finds future programme metadata for %s", (query) => {
+    const result = answerCrowGuide({ channels: scheduleChannels, programmes, query, now, timeZone: "Australia/Sydney" });
+    expect(result.intent).toBe("upcoming");
+    expect(result.candidates.map((item) => item.programme?.title)).toEqual(["Evening Laughs", "Late Laughs", "Tomorrow Laughs"]);
+    expect(result.candidates[0].reason).toContain("20:30");
+    expect(result.message).toContain("loaded guide");
+    expect(result.message).toContain("do not verify playback");
+  });
+
+  it("uses the requested timezone and stop-exclusive evening window for tonight", () => {
+    const result = answerCrowGuide({ channels: scheduleChannels, programmes, query: "comedy tonight not news", now, timeZone: "Australia/Sydney" });
+    expect(result.intent).toBe("tonight");
+    expect(result.candidates.map((item) => item.programme?.title)).toEqual(["Evening Laughs", "Late Laughs"]);
+    expect(result.message).toContain("18:00");
+    expect(result.message).toContain("Australia/Sydney");
+    expect(result.candidates.every((item) => item.programme)).toBe(true);
+  });
+
+  it("searches later matching programmes on the same channel and supports EPG aliases", () => {
+    const result = answerCrowGuide({
+      channels: [channel("alias", { epgAliases: ["first"] })],
+      programmes, query: "Evening Laughs upcoming", now,
+    });
+    expect(result.candidates[0].programme?.title).toBe("Evening Laughs");
+  });
+
+  it("preserves favourite scope and paginates future matches deterministically", () => {
+    const result = answerCrowGuide({ channels: scheduleChannels, programmes, favourites: ["later"], query: "my favourites tonight", now, timeZone: "Australia/Sydney" });
+    expect(result.candidates.map((item) => item.channel.key)).toEqual(["later"]);
+    expect(result.message).toContain("My List");
+    expect(result.nextOffset).toBe(0);
+  });
+
+  it.each(["comedy tonight", "upcoming ocean documentary"])("reports absent or insufficient schedules for %s", (query) => {
+    const result = answerCrowGuide({ channels: scheduleChannels, programmes: [programmes[0]], query, now, timeZone: "Australia/Sydney" });
+    expect(result.candidates).toEqual([]);
+    expect(result.needsGuide).toBe(true);
+    expect(result.message).toContain("loaded guide");
+    expect(result.message).toContain("Open Guide");
+  });
+
+  it("does not claim a title is unavailable when a loaded schedule is incomplete", () => {
+    const result = answerCrowGuide({ channels: scheduleChannels, programmes, query: "unlisted programme tonight", now, timeZone: "Australia/Sydney" });
+    expect(result.candidates).toEqual([]);
+    expect(result.message).toContain("cannot tell");
+    expect(result.message).not.toContain("loaded catalogue");
+  });
+
+  it("keeps future schedule answers independent of current programme exclusions", () => {
+    const result = answerCrowGuide({ channels: [scheduleChannels[0]], programmes, query: "comedy upcoming not news", now });
+    expect(result.candidates[0].programme?.title).toBe("Evening Laughs");
+  });
+
+  it("excludes finished, invalid and next-day programmes from tonight across DST", () => {
+    const channels = ["finished", "ongoing", "evening", "tomorrow", "invalid"].map((key) => channel(key));
+    const result = answerCrowGuide({
+      channels, query: "tonight", now: Date.parse("2026-10-04T09:00:00Z"), timeZone: "Australia/Sydney",
+      programmes: [
+        programme("finished", "Finished", { start: "2026-10-04T19:00:00+11:00", stop: "2026-10-04T20:00:00+11:00" }),
+        programme("ongoing", "Ongoing", { start: "2026-10-04T19:30:00+11:00", stop: "2026-10-04T20:30:00+11:00" }),
+        programme("evening", "Late", { start: "2026-10-04T23:00:00+11:00", stop: "2026-10-05T00:00:00+11:00" }),
+        programme("tomorrow", "Tomorrow", { start: "2026-10-05T00:00:00+11:00", stop: "2026-10-05T01:00:00+11:00" }),
+        programme("invalid", "Invalid", { start: "invalid", stop: "invalid" }),
+      ],
+    });
+    expect(result.candidates.map((item) => item.programme?.title)).toEqual(["Ongoing", "Late"]);
+  });
+
+  it("limits tonight to the evening when it is still afternoon in the viewer timezone", () => {
+    const result = answerCrowGuide({ channels: [channel("films")], query: "tonight", now: Date.parse("2026-09-12T03:00:00Z"), timeZone: "Australia/Sydney", programmes: [
+      programme("films", "Afternoon", { start: "2026-09-12T13:00:00+10:00", stop: "2026-09-12T17:00:00+10:00" }),
+      programme("films", "Evening", { start: "2026-09-12T18:00:00+10:00", stop: "2026-09-12T20:00:00+10:00" }),
+    ] });
+    expect(result.candidates[0].programme?.title).toBe("Evening");
+  });
+
+  it("keeps upcoming pagination stable across input order and reports the next loaded title", () => {
+    const channels = ["d", "a", "e", "b", "c"].map((key) => channel(key));
+    const programmes = channels.map((item) => programme(item.id, `${item.name} future`, {
+      start: "2026-09-12T11:00:00Z", stop: "2026-09-12T12:00:00Z",
+    }));
+    const first = answerCrowGuide({ channels, programmes, query: "upcoming", now });
+    const second = answerCrowGuide({ channels: [...channels].reverse(), programmes: [...programmes].reverse(), query: "upcoming", offset: first.nextOffset, now });
+    expect(first.candidates.map((item) => item.channel.key)).toEqual(["a", "b", "c"]);
+    expect(second.candidates.map((item) => item.channel.key)).toEqual(["d", "e"]);
+    expect(second.nextOffset).toBe(0);
+  });
+});

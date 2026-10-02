@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -14,7 +15,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -36,3 +37,12 @@ jobs:
 
       - name: Validate deployable site
         run: npm run check
+
+      - name: Verify isolated browser and decoded-media behavior
+        timeout-minutes: 8
+        run: |
+          export CROWFLIX_BROWSER="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)"
+          export FFMPEG_PATH="$(command -v ffmpeg)"
+          test -n "$CROWFLIX_BROWSER"
+          test -n "$FFMPEG_PATH"
+          npm run acceptance:ci
